@@ -1,41 +1,143 @@
+/**
+ * Mapeamento exato dos Bairros por Circunscrição da OPM (21º BPM)
+ */
+export const MAPA_BAIRROS_OPM = {
+    // --- 1ª CIA / 21º BPM ---
+    'CONJUNTO ESPERANÇA': '1ªCIA/21ºBPM',
+    'CONJUNTO ESPERANCA': '1ªCIA/21ºBPM',
+    'CONJ. ESPERANÇA': '1ªCIA/21ºBPM',
+    'CONJ. ESPERANCA': '1ªCIA/21ºBPM',
+    'VILA MANOEL SATIRO': '1ªCIA/21ºBPM',
+    'VILA MANOEL SÁTIRO': '1ªCIA/21ºBPM',
+    'PARQUE SÃO JOSÉ': '1ªCIA/21ºBPM',
+    'PARQUE SAO JOSE': '1ªCIA/21ºBPM',
+    'PQ SÃO JOSÉ': '1ªCIA/21ºBPM',
+    'PQ SAO JOSE': '1ªCIA/21ºBPM',
+    'PARQUE SANTA ROSA': '1ªCIA/21ºBPM',
+    'PQ SANTA ROSA': '1ªCIA/21ºBPM',
+    'PARQUE PRESIDENTE VARGAS': '1ªCIA/21ºBPM',
+    'PQ PRESIDENTE VARGAS': '1ªCIA/21ºBPM',
+    'PRESIDENTE VARGAS': '1ªCIA/21ºBPM',
+    'CANINDEZINHO': '1ªCIA/21ºBPM',
+    'MARAPONGA': '1ªCIA/21ºBPM',
+    'JARDIM CEARENSE': '1ªCIA/21ºBPM',
+    'NOVO MONDUBIM': '1ªCIA/21ºBPM',
+
+    // --- 2ª CIA / 21º BPM ---
+    'PLANALTO AIRTON SENA': '2ªCIA/21ºBPM',
+    'PLANALTO AYRTON SENNA': '2ªCIA/21ºBPM',
+    'PREFEITO JOSÉ WALTER': '2ªCIA/21ºBPM',
+    'PREFEITO JOSE WALTER': '2ªCIA/21ºBPM',
+    'JOSÉ WALTER': '2ªCIA/21ºBPM',
+    'JOSE WALTER': '2ªCIA/21ºBPM',
+    'ARACAPÉ': '2ªCIA/21ºBPM',
+    'ARACAPE': '2ªCIA/21ºBPM',
+    'MONDUBIM': '2ªCIA/21ºBPM',
+    'CIDADE NOVA': '2ªCIA/21ºBPM',
+    'PARQUE SANTANA': '2ªCIA/21ºBPM',
+    'PQ SANTANA': '2ªCIA/21ºBPM',
+};
+
+/**
+ * Tabela De-Para com opções do SIPOM e equivalências de rua
+ */
+export const MAPA_NATUREZAS_SIPOM = {
+    'ABANDONO DE MATERIAL ILICITO': 'OUTRAS INFRAÇÕES À LEI DE ENTORPECENTES',
+    'ABANDONO DE MATERIAL ILÍCITO': 'OUTRAS INFRAÇÕES À LEI DE ENTORPECENTES',
+    'ACHADO DE ENTORPECENTE': 'OUTRAS INFRAÇÕES À LEI DE ENTORPECENTES',
+    'APREENSÃO DE ENTORPECENTES': 'OUTRAS INFRAÇÕES À LEI DE ENTORPECENTES',
+    'APREENSAO DE ENTORPECENTES': 'OUTRAS INFRAÇÕES À LEI DE ENTORPECENTES',
+    'TRAFICO DE DROGAS': 'TRAFICO ILICITO DE DROGAS',
+    'TRAFICO DE ENTORPECENTES': 'TRAFICO ILICITO DE DROGAS',
+    'USO DE DROGAS': 'USUARIOS OU DEPENDENTES DE DROGAS',
+    'MANDADO DE PRISAO': 'CRUMPIMENTO DE MANDADO DE PRISÃO',
+    'RECAPTURA': 'RECAPTURA DE PRESO',
+    'PORTE DE ARMA': 'PORTE ILEGAL DE ARMA DE FOGO DE USO PERMITIDO',
+    'POSSE DE ARMA': 'POSSE IRREGULAR DE ARMA DE FOGO DE USO PERMITITDO',
+    'ROUBO DE CELULAR': 'ROUBO DE DISPPOSITIVO DE TELEFONIA MÓVEL',
+    'OUTRAS LESOES CORPORAIS CULPOSAS': 'OUTRAS LESOES CORPORAIS CULPOSAS'
+};
+
+/**
+ * Função principal de parsing para extrair dados do relatório textual
+ */
 export function parseRelatorioSipom(texto) {
-    // Extração via Expressões Regulares
-    const fichaCiops = texto.match(/Ficha da CIOPS:\s*(\w+)/i)?.[1] || null;
+    if (typeof texto === 'object') return texto; // Retorna direto se já for JSON
+
+    const fichaCiops = texto.match(/Ficha da CIOPS:\s*(\w+)/i)?.[1] || '';
     const naturezaBruta = texto.match(/Natureza da Ocorrência:\s*(.+)/i)?.[1]?.trim() || '';
     const data = texto.match(/Data:\s*([\d\/]+)/i)?.[1] || '';
     const horaInicial = texto.match(/Inicial:\s*([\d\w]+)/i)?.[1] || '00:00';
     const enderecoBruto = texto.match(/Endereço:\s*(.+)/i)?.[1] || '';
-    const viatura = texto.match(/Vtr\s*([\d]+)/i)?.[1] || '';
+    const viaturaMatch = texto.match(/Vtr\s*([\d]+)/i)?.[1] || '';
 
-    // Extração de Histórico e Composições
-    const historico = texto.split(/Histórico:/i)[1]?.trim() || '';
-
-    // Tratamento de Endereço (Rua, Número, Bairro, Cidade)
+    // Tratamento do endereço
     const partesEnd = enderecoBruto.split(',').map(s => s.trim());
     const rua = partesEnd[0] || '';
     const numero = partesEnd[1] || 'S/N';
-    const bairro = partesEnd[2] || '';
+    const bairro = (partesEnd[2] || '').toUpperCase();
     const cidade = partesEnd[3] || 'Fortaleza';
 
-    // Resolução de Dicionários (De-Para)
-    const opmLocal = MAPA_BAIRROS_OPM[bairro.toUpperCase()] || '2ªCIA/21ºBPM';
-    const naturezaSipom = MAPA_NATUREZAS_SIPOM[naturezaBruta.toUpperCase()] || 'OUTRAS LESOES CORPORAIS CULPOSAS';
+    // Resolução dos mapeamentos com fallback seguro
+    const opmLocal = MAPA_BAIRROS_OPM[bairro] || '2ªCIA/21ºBPM';
+    const naturezaSipom = MAPA_NATUREZAS_SIPOM[naturezaBruta.toUpperCase()] || naturezaBruta;
+
+    // Extração do histórico
+    const historicoMatch = texto.split(/Histórico:/i);
+    const historico = historicoMatch.length > 1 ? historicoMatch[1].trim() : '';
+
+    // Extração de Pessoas
+    const pessoas = [];
+    const vitimaNome = texto.match(/Vítima:\s*(.+)/i)?.[1]?.trim();
+    const vitimaMae = texto.match(/Vítima:[\s\S]*?Mãe:\s*(.+)/i)?.[1]?.trim();
+    if (vitimaNome) {
+        pessoas.push({ nome: vitimaNome, vinculo: 'Vítima', mae: vitimaMae || '' });
+    }
+
+    const acusadoNome = texto.match(/Acusado:\s*(.+)/i)?.[1]?.trim();
+    const acusadoMae = texto.match(/Acusado:[\s\S]*?Mãe:\s*(.+)/i)?.[1]?.trim();
+    if (acusadoNome) {
+        pessoas.push({ nome: acusadoNome, vinculo: 'Infrator', mae: acusadoMae || '' });
+    }
+
+    // Extração do Procedimento
+    const procLinha = texto.match(/Delegado\/Delegacia\/Procedimento:\s*(.+)/i)?.[1] || '';
+    const procPartes = procLinha.split('/').map(s => s.trim());
+    const procedimento = {
+        delegado: procPartes[0] || '',
+        delegacia: procPartes[1] || '',
+        numero: procPartes[2] || ''
+    };
+
+    // Extração da Composição
+    const composicao = [];
+    const linhasComp = texto.match(/(CMT|MOT|PAT):\s*(.+)/gi) || [];
+    linhasComp.forEach(linha => {
+        const match = linha.match(/(CMT|MOT|PAT):\s*([^\n\rMF]+)(?:M\.F\.:\s*([\d.-]+))?/i);
+        if (match) {
+            composicao.push({
+                funcao: match[1].toUpperCase(),
+                nome: match[2].trim(),
+                matricula: match[3] ? match[3].trim() : ''
+            });
+        }
+    });
 
     return {
         fichaCiops,
         naturezaSipom,
-        dataHoraFormatada: `${data} ${horaInicial}`,
+        dataHoraFormatada: `${data} ${horaInicial.replace(/h|min/g, ':').replace(/:$/, '')}`,
         rua,
         numero,
         bairro,
         cidade,
         opmLocal,
         opmAtendeu: opmLocal,
-        viatura: `Vtr ${viatura}`,
+        viatura: viaturaMatch ? `Vtr ${viaturaMatch}` : '',
         historico,
-        // Listas extraídas para abas secundárias
-        pessoas: extrairPessoas(texto),
-        procedimento: extrairProcedimento(texto),
-        composicao: extrairComposicao(texto)
+        pessoas,
+        procedimento,
+        materiais: [],
+        composicao
     };
 }
