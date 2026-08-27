@@ -3,25 +3,30 @@ import path from 'path';
 import fs from 'fs';
 
 /**
- * Função principal que executa a automação completa no portal SIPOM (ROP)
- * @param {Object} dados Objeto estruturado vindo do parserSipom.js
+ * Executa a automação completa de cadastro no SIPOM via Playwright
+ * @param {Object} dados Objeto estruturado extraído pelo parserSipom.js
  * @returns {Promise<{success: boolean, idSipom: string, url: string}>}
  */
 export async function preencherSipomCompleto(dados) {
     const sessionPath = path.resolve('sipom_session.json');
 
-    // Valida existência do arquivo de sessão
-    if (!fs.existsSync(sessionPath)) {
-        throw new Error('Arquivo de sessão "sipom_session.json" não encontrado. Execute "node login.js" para autenticar.');
+    // 1. Recria o arquivo de sessão dinamicamente no Render caso não exista fisicamente
+    if (!fs.existsSync(sessionPath) && process.env.SIPOM_SESSION_JSON) {
+        fs.writeFileSync(sessionPath, process.env.SIPOM_SESSION_JSON, 'utf-8');
+        console.log('[+] Sessão injetada via variável de ambiente SIPOM_SESSION_JSON.');
     }
 
-    // Inicializa o navegador Headless (defina headless: false se quiser visualizar a execução local)
+    if (!fs.existsSync(sessionPath)) {
+        throw new Error('Sessão não configurada. Defina a variável SIPOM_SESSION_JSON no painel do Render.');
+    }
+
+    // 2. Inicializa o navegador Headless em ambiente Linux/Docker
     const browser = await chromium.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
 
-    // Cria contexto reaproveitando os cookies e LocalStorage
+    // Carrega cookies (ci_session) e LocalStorage (csrf_token_sipom)
     const context = await browser.newContext({
         storageState: sessionPath,
         viewport: { width: 1280, height: 720 },
@@ -32,23 +37,21 @@ export async function preencherSipomCompleto(dados) {
 
     try {
         // -------------------------------------------------------------
-        // 1. NAVEGAÇÃO E PREENCHIMENTO DO FORMULÁRIO PRINCIPAL (Imagem 1)
+        // FORMULÁRIO PRINCIPAL: CRIAR OCORRÊNCIA
         // -------------------------------------------------------------
-        console.log('[+] Acessando a página de criação de ocorrência...');
+        console.log('[+] Acessando a página de criação do SIPOM...');
         await page.goto('https://sipom.pm.ce.gov.br/ocorrencias/criar', { waitUntil: 'networkidle', timeout: 30000 });
 
-        // Checa se foi redirecionado para o login (Sessão expirada)
+        // Verifica expiração de sessão
         if (page.url().includes('/login') || page.url().includes('/auth')) {
-            throw new Error('Sessão expirada no SIPOM. É necessário renovar o arquivo "sipom_session.json" via login.js.');
+            throw new Error('Sessão expirada no SIPOM. Atualize o JSON da variável SIPOM_SESSION_JSON.');
         }
 
-        // Preenchimento dos campos principais
-        console.log('[+] Preenchendo dados principais...');
+        console.log('[+] Preenchendo campos principais...');
 
-        // Natureza (Select)
+        // Natureza
         if (dados.naturezaSipom) {
             await page.selectOption('select[name="natureza"]', { label: dados.naturezaSipom }).catch(async () => {
-                // Fallback caso a seleção por rótulo direto necessite de busca textual
                 await page.selectOption('select[name="natureza"]', { value: dados.naturezaSipom });
             });
         }
@@ -88,7 +91,7 @@ export async function preencherSipomCompleto(dados) {
             page.click('button:has-text("Registrar Ocorrência")')
         ]);
 
-        // Extrai a URL e o ID gerado da ocorrência (ex: /ocorrencias/ocorrencias-exibir/1b1e1e1b1...)
+        // Captura o ID e URL de exibição da ocorrência criada
         const currentUrl = page.url();
         const idSipomMatch = currentUrl.match(/ocorrencias-exibir\/([a-zA-Z0-9]+)/);
         const idSipom = idSipomMatch ? idSipomMatch[1] : 'N/A';
@@ -96,7 +99,7 @@ export async function preencherSipomCompleto(dados) {
         console.log(`[+] Ocorrência criada com sucesso! ID: ${idSipom}`);
 
         // -------------------------------------------------------------
-        // 2. PREENCHIMENTO DAS ABAS SECUNDÁRIAS (Imagem 2)
+        // PREENCHIMENTO DAS ABAS SECUNDÁRIAS
         // -------------------------------------------------------------
 
         // ABA 1: PESSOAS
@@ -166,7 +169,7 @@ export async function preencherSipomCompleto(dados) {
             await page.waitForTimeout(1000);
 
             for (const item of dados.materiais) {
-                if (item.descricao && item.descricao !== 'S/A') {
+                if (item.descricao && item.descricao.toUpperCase() !== 'S/A') {
                     await page.click('button:has-text("+ Material")').catch(() => { });
                     await page.fill('input[name="descricao"]', item.descricao);
                     await page.click('button:has-text("Salvar")');
@@ -194,7 +197,7 @@ export async function preencherSipomCompleto(dados) {
             }
         }
 
-        console.log('[+] Finalizado preenchimento de todas as abas com sucesso!');
+        console.log('[+] Automação finalizada com sucesso!');
 
         return {
             success: true,
@@ -203,7 +206,7 @@ export async function preencherSipomCompleto(dados) {
         };
 
     } catch (error) {
-        console.error('[-] Erro crítico durante a execução do Playwright:', error.message);
+        console.error('[-] Erro crítico no Playwright:', error.message);
         throw error;
     } finally {
         await context.close();
