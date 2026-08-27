@@ -2,6 +2,9 @@ import { chromium } from 'playwright';
 import path from 'path';
 import fs from 'fs';
 
+// Força o Playwright a buscar o Chromium na pasta local do projeto no Render
+process.env.PLAYWRIGHT_BROWSERS_PATH = '0';
+
 /**
  * Executa a automação completa de cadastro no SIPOM via Playwright
  * @param {Object} dados Objeto estruturado extraído pelo parserSipom.js
@@ -10,7 +13,7 @@ import fs from 'fs';
 export async function preencherSipomCompleto(dados) {
     const sessionPath = path.resolve('sipom_session.json');
 
-    // 1. Recria o arquivo de sessão dinamicamente no Render caso não exista fisicamente
+    // 1. Recria o arquivo de sessão dinamicamente no Render usando a variável de ambiente
     if (!fs.existsSync(sessionPath) && process.env.SIPOM_SESSION_JSON) {
         fs.writeFileSync(sessionPath, process.env.SIPOM_SESSION_JSON, 'utf-8');
         console.log('[+] Sessão injetada via variável de ambiente SIPOM_SESSION_JSON.');
@@ -20,7 +23,7 @@ export async function preencherSipomCompleto(dados) {
         throw new Error('Sessão não configurada. Defina a variável SIPOM_SESSION_JSON no painel do Render.');
     }
 
-    // 2. Inicializa o navegador Headless em ambiente Linux/Docker
+    // 2. Inicializa o navegador Headless
     const browser = await chromium.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -42,7 +45,7 @@ export async function preencherSipomCompleto(dados) {
         console.log('[+] Acessando a página de criação do SIPOM...');
         await page.goto('https://sipom.pm.ce.gov.br/ocorrencias/criar', { waitUntil: 'networkidle', timeout: 30000 });
 
-        // Verifica expiração de sessão
+        // Verifica se houve redirecionamento para o login (Sessão expirada)
         if (page.url().includes('/login') || page.url().includes('/auth')) {
             throw new Error('Sessão expirada no SIPOM. Atualize o JSON da variável SIPOM_SESSION_JSON.');
         }
