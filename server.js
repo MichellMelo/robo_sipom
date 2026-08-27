@@ -1,8 +1,17 @@
 import 'dotenv/config';
 import express from 'express';
-import { Bot } from 'grammy';
+import { Bot, InlineKeyboard } from 'grammy';
 import { parseRelatorioSipom } from './parserSipom.js';
-import { preencherSipomCompleto } from './sipomAutomation.js';
+import {
+    obterPaginaGlobal,
+    preencherFormulario1,
+    preencherAbaPessoas,
+    preencherModalProcedimento,
+    preencherModalHistorico,
+    preencherModalMaterial,
+    preencherModalComposicao,
+    preencherSipomCompleto
+} from './sipomAutomation.js';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -11,7 +20,7 @@ const PORT = process.env.PORT || 10000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Rota de Health Check / Ping (para o cron-job.org e validação do Render)
+// Rota de Health Check / Ping
 app.get('/ping', (req, res) => {
     res.status(200).send('pong');
 });
@@ -26,7 +35,22 @@ if (!TELEGRAM_TOKEN) {
 
 const bot = new Bot(TELEGRAM_TOKEN);
 
-// Tratador global de erros do Bot (impede que exceções no Polling derrubem o servidor)
+// Guarda o relatório processado na sessão em memória por Chat ID
+const sessoesUsuarios = new Map();
+
+// Constrói os botões do Menu no Telegram
+function criarMenuOpcoes() {
+    return new InlineKeyboard()
+        .text('1. Criar Ocorrência Completa', 'opcao_1').row()
+        .text('2. Preencher Apenas Pessoas', 'opcao_2')
+        .text('3. Preencher Apenas Procedimento', 'opcao_3').row()
+        .text('4. Preencher Apenas Histórico', 'opcao_4')
+        .text('5. Preencher Apenas Materiais', 'opcao_5').row()
+        .text('6. Preencher Apenas Composições', 'opcao_6').row()
+        .text('🚀 7. FAZER TUDO AGORA (Modais)', 'opcao_7');
+}
+
+// Tratador global de erros do Bot
 bot.catch((err) => {
     console.error('[!] Erro no bot do Telegram:', err.error?.message || err.message);
 });
@@ -35,38 +59,87 @@ bot.catch((err) => {
 bot.on('message:text', async (ctx) => {
     const textoMensagem = ctx.message.text;
 
-    // Ignora o comando de inicialização padrão do Telegram
     if (textoMensagem === '/start') {
-        return ctx.reply('👋 Olá! Envie o relatório da ocorrência em texto para iniciar o cadastro automático no SIPOM.');
+        return ctx.reply('👋 Olá! Envie o relatório da ocorrência em texto para iniciar o cadastro no SIPOM.');
     }
 
     console.log(`[+] Mensagem recebida do usuário ${ctx.from.username || ctx.from.id}`);
-    await ctx.reply('⏳ *Analisando relatório e iniciando preenchimento no SIPOM...*', { parse_mode: 'Markdown' });
 
     try {
-        // 1. Parser: Converte o texto bruto do relatório em objeto JSON estruturado
+        // 1. Parser: Extrai o relatório para objeto em memória
         const dadosEstruturados = parseRelatorioSipom(textoMensagem);
+        sessoesUsuarios.set(ctx.chat.id, dadosEstruturados);
+
         console.log('[+] Dados extraídos com sucesso:', dadosEstruturados.fichaCiops || 'Sem Ficha');
 
-        // 2. Playwright: Executa a automação no SIPOM
-        const resultado = await preencherSipomCompleto(dadosEstruturados);
-
-        if (resultado.success) {
-            const mensagemSucesso =
-                `✅ *Ocorrência Registrada com Sucesso!*\n\n` +
-                `📌 *ID SIPOM:* \`${resultado.idSipom}\`\n` +
-                `🔗 *URL:* [Visualizar Ocorrência](${resultado.url})`;
-
-            await ctx.reply(mensagemSucesso, { parse_mode: 'Markdown', disable_web_page_preview: true });
-        }
-    } catch (error) {
-        console.error('[-] Erro ao processar ocorrência:', error.message);
-
+        // 2. Exibe o Menu Inline no Telegram
         await ctx.reply(
-            `❌ *Falha no Preenchimento:*\n\`${error.message}\`\n\n` +
-            `_Verifique se a sessão do SIPOM está válida na variável SIPOM_SESSION_JSON e tente novamente._`,
-            { parse_mode: 'Markdown' }
+            `📄 *RELATÓRIO CARREGADO COM SUCESSO!*\n\n` +
+            `📌 *Ficha CIOPS:* \`${dadosEstruturados.fichaCiops || 'S/N'}\`\n` +
+            `🚔 *Natureza:* ${dadosEstruturados.naturezaSipom || 'N/A'}\n\n` +
+            `Escolha uma opção de execução no menu abaixo:`,
+            {
+                parse_mode: 'Markdown',
+                reply_markup: criarMenuOpcoes()
+            }
         );
+    } catch (error) {
+        console.error('[-] Erro ao ler relatório:', error.message);
+        await ctx.reply(`❌ *Erro ao processar relatório:* ${error.message}`, { parse_mode: 'Markdown' });
+    }
+});
+
+// Manipulador de cliques nos botões do Menu
+bot.on('callback_query:data', async (ctx) => {
+    const chatId = ctx.chat.id;
+    const opcao = ctx.callbackQuery.data;
+    const dados = sessoesUsuarios.get(chatId);
+
+    if (!dados) {
+        await ctx.answerCallbackQuery({ text: 'Sessão expirada. Reenvie o relatório no chat.', show_alert: true });
+        return;
+    }
+
+    await ctx.answerCallbackQuery({ text: 'Iniciando automação...' });
+    await ctx.reply(`⏳ *Executando a opção selecionada no SIPOM...*`, { parse_mode: 'Markdown' });
+
+    try {
+        const page = await obterPaginaGlobal();
+
+        if (opcao === 'opcao_1') {
+            const res = await preencherSipomCompleto(dados);
+            await ctx.reply(`✅ *Ocorrência Completa Registrada!*\n📌 *ID:* \`${res.idSipom}\`\n🔗 [Visualizar Ocorrência](${res.url})`, { parse_mode: 'Markdown', disable_web_page_preview: true });
+        } else if (opcao === 'opcao_2') {
+            await preencherAbaPessoas(page, dados);
+            await ctx.reply('✅ *Aba Pessoas preenchida com sucesso!*', { parse_mode: 'Markdown' });
+        } else if (opcao === 'opcao_3') {
+            await preencherModalProcedimento(page, dados.procedimento);
+            await ctx.reply('✅ *Modal Procedimento preenchido com sucesso!*', { parse_mode: 'Markdown' });
+        } else if (opcao === 'opcao_4') {
+            await preencherModalHistorico(page, dados.historico);
+            await ctx.reply('✅ *Modal Histórico preenchido com sucesso!*', { parse_mode: 'Markdown' });
+        } else if (opcao === 'opcao_5') {
+            await preencherModalMaterial(page, dados.materiais);
+            await ctx.reply('✅ *Modal Materiais preenchido com sucesso!*', { parse_mode: 'Markdown' });
+        } else if (opcao === 'opcao_6') {
+            await preencherModalComposicao(page, dados.composicao);
+            await ctx.reply('✅ *Modal Composição preenchido com sucesso!*', { parse_mode: 'Markdown' });
+        } else if (opcao === 'opcao_7') {
+            await preencherAbaPessoas(page, dados);
+            if (dados.procedimento) await preencherModalProcedimento(page, dados.procedimento);
+            if (dados.historico) await preencherModalHistorico(page, dados.historico);
+            if (dados.materiais) await preencherModalMaterial(page, dados.materiais);
+            if (dados.composicao) await preencherModalComposicao(page, dados.composicao);
+            await ctx.reply('🎉 *TODOS OS MODAIS FORAM PREENCHIDOS E GRAVADOS COM SUCESSO!*', { parse_mode: 'Markdown' });
+        }
+
+        await ctx.reply('Deseja realizar mais alguma ação nesta mesma ocorrência?', {
+            reply_markup: criarMenuOpcoes()
+        });
+
+    } catch (error) {
+        console.error('[-] Erro na automação local:', error.message);
+        await ctx.reply(`❌ *Falha na Automação:* ${error.message}`, { parse_mode: 'Markdown' });
     }
 });
 
@@ -82,9 +155,7 @@ bot.start().then(() => {
     console.error('[-] Falha ao conectar ao Polling do Telegram:', err.message);
 });
 
-// -------------------------------------------------------------
-// GRACEFUL SHUTDOWN (Encerramento Limpo para Render / Docker)
-// -------------------------------------------------------------
+// Encerramento limpo
 const encerrarServico = async (sinal) => {
     console.log(`\n[!] Recebido sinal ${sinal}. Encerrando o robô graciosamente...`);
 

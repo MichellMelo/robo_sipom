@@ -82,9 +82,14 @@ export function parseRelatorioSipom(texto) {
     const opmLocal = MAPA_BAIRROS_OPM[bairro] || '2ªCIA/21ºBPM';
     const naturezaSipom = MAPA_NATUREZAS_SIPOM[naturezaBruta.toUpperCase()] || naturezaBruta;
 
-    // Extração do histórico
+    // Extração exata e limpa do Histórico
     const historicoMatch = texto.split(/Histórico:/i);
-    const historico = historicoMatch.length > 1 ? historicoMatch[1].trim() : '';
+    let historico = '';
+
+    if (historicoMatch.length > 1) {
+        // Pega tudo após 'Histórico:' e limpa seções posteriores caso existam
+        historico = historicoMatch[1].split(/(?:Vítima|Acusado|Delegado\/Delegacia|CMT|MOT|PAT):/i)[0].trim();
+    }
 
     // Extração de Pessoas
     const pessoas = [];
@@ -100,14 +105,59 @@ export function parseRelatorioSipom(texto) {
         pessoas.push({ nome: acusadoNome, vinculo: 'Infrator', mae: acusadoMae || '' });
     }
 
-    // Extração do Procedimento
+    // Extração Dinâmica de Procedimento (Exemplos aceitos: "NOME / 132-4587/2026" ou "NOME / 12º DP / 4587 / 2026")
     const procLinha = texto.match(/Delegado\/Delegacia\/Procedimento:\s*(.+)/i)?.[1] || '';
     const procPartes = procLinha.split('/').map(s => s.trim());
+
+    let delegado = procPartes[0] || '';
+    let delegacia = '';
+    let numeroProc = '';
+    let anoProc = new Date().getFullYear().toString(); // Fallback dinâmico para o ano atual caso não conste no texto
+
+    // 1ª Tentativa: Tenta capturar o formato compacto "CODIGO-NUMERO/ANO" (ex: 132-4587/2026) na linha inteira
+    const matchEstruturado = procLinha.match(/(\d{2,4})\s*-\s*(\d+)(?:\/(\d{4}))?/);
+
+    if (matchEstruturado) {
+        delegacia = matchEstruturado[1].trim(); // Pega dinamicamente os números antes do hífen (ex: 132)
+        numeroProc = matchEstruturado[2].trim(); // Pega dinamicamente os números após o hífen (ex: 4587)
+        if (matchEstruturado[3]) anoProc = matchEstruturado[3].trim(); // Pega dinamicamente o ano (ex: 2026)
+    } else {
+        // 2ª Tentativa: Caso venha separado por barras (ex: "DELEGADO / DELEGACIA / NUMERO / ANO")
+        if (procPartes[1]) delegacia = procPartes[1].replace(/\D/g, ''); // Extrai apenas os dígitos da delegacia
+        if (procPartes[2]) numeroProc = procPartes[2].replace(/\D/g, ''); // Extrai apenas os dígitos do número
+        if (procPartes[3]) anoProc = procPartes[3].replace(/\D/g, ''); // Extrai apenas os dígitos do ano
+    }
+
     const procedimento = {
-        delegado: procPartes[0] || '',
-        delegacia: procPartes[1] || '',
-        numero: procPartes[2] || ''
+        delegado,
+        delegacia, // Valor extraído dinamicamente
+        numero: numeroProc, // Valor extraído dinamicamente
+        ano: anoProc, // Valor extraído dinamicamente
+        procedimento: 'Boletim de Ocorrência - BO'
     };
+
+    // Extração de Materiais / Drogas
+    const materiais = [];
+    const textoDrogas = texto.match(/(?:Material|Apreensão|Drogas?):\s*(.+)/i)?.[1] || texto;
+
+    // Procura padrões conhecidos de entorpecentes no texto do relatório
+    const regioesEntorpecentes = [
+        { regex: /(coca[ií]na|coca)\s*[:\-=]?\s*(\d+(?:[.,]\d+)?)/i, tipo: 'Cocaína' },
+        { regex: /(crack)\s*[:\-=]?\s*(\d+(?:[.,]\d+)?)/i, tipo: 'Crack' },
+        { regex: /(maconha|haxixe|skunk)\s*[:\-=]?\s*(\d+(?:[.,]\d+)?)/i, tipo: 'Maconha' },
+        { regex: /(ecstasy|mdma)\s*[:\-=]?\s*(\d+(?:[.,]\d+)?)/i, tipo: 'Ecstasy/MDMA' }
+    ];
+
+    regioesEntorpecentes.forEach(item => {
+        const match = textoDrogas.match(item.regex);
+        if (match) {
+            materiais.push({
+                tipo: 'Droga',
+                nomeDroga: item.tipo,
+                quantidade: match[2].replace(',', '.')
+            });
+        }
+    });
 
     // Extração da Composição
     const composicao = [];
