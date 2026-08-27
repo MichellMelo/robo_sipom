@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import { Bot } from 'grammy';
 import { parseRelatorioSipom } from './parserSipom.js';
