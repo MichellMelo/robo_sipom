@@ -136,16 +136,82 @@ export async function preencherModalPessoa(page, pessoa) {
     }
 }
 
+/**
+ * ABA PESSOAS: Garante clique na aba e abertura correta do modal
+ */
 export async function preencherAbaPessoas(page, dados) {
-    console.log('\n[+] Acessando Aba: Pessoas...');
-    const abaPessoas = page.locator('#pessoas-tab, a:has-text("Pessoas")').first();
-    await abaPessoas.click().catch(() => { });
-    await page.waitForTimeout(1500);
+    const listaPessoas = Array.isArray(dados?.pessoas) ? dados.pessoas : [];
+    if (!listaPessoas.length) return;
 
-    if (dados.pessoas && dados.pessoas.length > 0) {
-        for (const pessoa of dados.pessoas) {
-            await preencherModalPessoa(page, pessoa);
+    try {
+        console.log('\n[+] Acessando Aba: Pessoas...');
+
+        // 1. Clica obrigatoriamente na aba de Pessoas (#pessoas-tab)
+        const abaPessoas = page.locator('#pessoas-tab, a:has-text("Pessoas")').first();
+        await abaPessoas.waitFor({ state: 'visible', timeout: 5000 });
+        await abaPessoas.click({ force: true });
+        await page.waitForTimeout(1000);
+
+        for (const pessoa of listaPessoas) {
+            console.log(`[+] Adicionando Pessoa: [${pessoa.vinculo || 'Vítima'}] ${pessoa.nome}...`);
+
+            // 2. Clica no botão "+ Pessoa" visível no painel ativo
+            const btnAbrirModal = page.locator('#pessoas button:has-text("Pessoa"), button[data-target="#modalPessoa"], .btn-success:has-text("Pessoa")').first();
+            await btnAbrirModal.waitFor({ state: 'visible', timeout: 5000 });
+            await btnAbrirModal.click({ force: true });
+
+            // 3. Aguarda o Modal de Pessoa ficar aberto na tela
+            const modalPessoa = page.locator('#modalPessoa, div.modal.show').first();
+            await modalPessoa.waitFor({ state: 'visible', timeout: 8000 });
+            await page.waitForTimeout(600);
+
+            // 4. Seleção de Vínculo (Pessoas Envolvidas)
+            const vinculoAlvo = pessoa.vinculo || 'Vítima';
+            await page.evaluate(({ tipo }) => {
+                const select = document.querySelector('#modalPessoa select[name*="vinculo"], #modalPessoa select[name*="envolvida"], .modal.show select');
+                if (select) {
+                    const normalizar = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
+                    const alvo = normalizar(tipo);
+                    const opt = Array.from(select.options).find(o => normalizar(o.textContent).includes(alvo));
+                    if (opt) {
+                        select.value = opt.value;
+                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                }
+            }, { tipo: vinculoAlvo });
+
+            // 5. Preenchimento de Nome
+            if (pessoa.nome) {
+                const inputNome = page.locator('#modalPessoa input[placeholder*="NOME"], #modalPessoa input[name*="nome"], .modal.show input[placeholder*="NOME"]').first();
+                if (await inputNome.isVisible({ timeout: 2000 })) {
+                    await inputNome.fill('');
+                    await inputNome.pressSequentially(pessoa.nome.toUpperCase(), { delay: 40 });
+                }
+            }
+
+            // 6. Preenchimento de Mãe
+            if (pessoa.mae) {
+                const inputMae = page.locator('#modalPessoa input[placeholder*="MÃE"], #modalPessoa input[name*="mae"], .modal.show input[placeholder*="MÃE"]').first();
+                if (await inputMae.isVisible({ timeout: 2000 })) {
+                    await inputMae.fill('');
+                    await inputMae.pressSequentially(pessoa.mae.toUpperCase(), { delay: 40 });
+                }
+            }
+
+            await page.waitForTimeout(500);
+
+            // 7. Salva a Pessoa
+            const btnSalvar = page.locator('#modalPessoa button.btn-success, #modalPessoa button:has-text("Adicionar")').first();
+            await btnSalvar.click({ force: true });
+
+            await modalPessoa.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => { });
+            await page.waitForTimeout(1000);
         }
+
+        console.log('✅ Aba Pessoas concluída!');
+
+    } catch (error) {
+        console.warn('⚠️ Falha na aba de Pessoas:', error.message);
     }
 }
 
@@ -657,7 +723,7 @@ export async function preencherModalComposicao(page, composicao) {
             await page.waitForTimeout(500);
 
             // 5. Preenche a Matrícula utilizando localização visual e atributo
-            const matriculaFormatada = String(militar.matricula || '').replace(/\D/g, '');
+            const matriculaFormatada = String(militar.matricula || '').trim().toUpperCase();
             console.log(`[+] Preenchendo Matrícula: "${matriculaFormatada}"...`);
 
             if (matriculaFormatada) {
@@ -687,8 +753,8 @@ export async function preencherModalComposicao(page, composicao) {
                     }
                 }, { val: matriculaFormatada });
 
-                // Aguarda 3s para o SIPOM consultar no banco de dados e preencher o Nome automaticamente
-                await page.waitForTimeout(3000);
+                // Aguarda 2s para o SIPOM consultar no banco de dados e preencher o Nome automaticamente
+                await page.waitForTimeout(2000);
             }
 
             // 6. Clique de confirmação/salvamento (Salvar / Atualizar)
@@ -720,61 +786,184 @@ export async function preencherModalComposicao(page, composicao) {
 }
 
 /**
- * PREENCHIMENTO DO FORMULÁRIO 1 (DADOS DA OCORRÊNCIA)
+ * FORMULÁRIO INICIAL: Preenchimento do SIPOM com seleção estrita no Google Places
  */
 export async function preencherFormulario1(page, dados) {
     if (!dados) return;
 
     try {
-        console.log('\n[+] Preenchendo Formulário Inicial da Ocorrência...');
+        console.log('\n[+] Preenchendo Formulário Inicial de Criação...');
 
-        // 1. Ficha CIOPS
-        if (dados.fichaCiops) {
-            const inputCiops = page.locator('input[name="ciops"], input[name="ficha_ciops"]').first();
-            if (await inputCiops.isVisible({ timeout: 2000 })) {
-                await inputCiops.fill(dados.fichaCiops);
-            }
-        }
-
-        // 2. Natureza da Ocorrência
+        // 1. Natureza da Ocorrência (Preenchimento Select2 com Fallback de Validação HTML5)
         if (dados.naturezaSipom) {
             console.log(`[+] Selecionando Natureza: "${dados.naturezaSipom}"...`);
-            const comboNatureza = page.locator('.select2-container:has(#select2-natureza)').first();
-            if (await comboNatureza.isVisible({ timeout: 2000 })) {
+
+            // Força a seleção visual e via teclado no Select2
+            try {
+                const comboNatureza = page.locator('#select2-natureza_id-container, #select2-natureza-container, label:has-text("Natureza") + .select2-container, .select2-container').first();
+                await comboNatureza.waitFor({ state: 'visible', timeout: 3000 });
                 await comboNatureza.click({ force: true });
                 await page.waitForTimeout(300);
+
                 const searchInput = page.locator('.select2-container--open input.select2-search__field').first();
                 if (await searchInput.isVisible({ timeout: 2000 })) {
-                    await searchInput.fill(dados.naturezaSipom);
+                    await searchInput.fill('');
+                    await searchInput.pressSequentially(dados.naturezaSipom, { delay: 60 });
+                    await page.waitForTimeout(600);
+
+                    // Clica explicitamente no item destacado da lista do Select2
+                    const itemResultado = page.locator('.select2-results__option--highlighted, .select2-results__option:not(.select2-results__option--disabled)').first();
+                    if (await itemResultado.isVisible({ timeout: 2000 })) {
+                        await itemResultado.click({ force: true });
+                    } else {
+                        await page.keyboard.press('Enter');
+                    }
+                }
+            } catch (e) {
+                console.warn('⚠️ Falha ao interagir visualmente com o Select2 da Natureza:', e.message);
+            }
+
+            await page.waitForTimeout(500);
+
+            // Injeção de Segurança no DOM para destravar a validação do HTML5 ("Selecione um item da lista")
+            await page.evaluate(({ textoNatureza }) => {
+                const selectNat = document.querySelector('select[name="natureza_id"]') ||
+                    document.querySelector('select[name="natureza"]') ||
+                    document.querySelector('select#natureza_id') ||
+                    document.querySelector('select#natureza');
+
+                if (selectNat) {
+                    const normalizar = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
+                    const alvo = normalizar(textoNatureza);
+
+                    const opcaoMatch = Array.from(selectNat.options).find(opt => {
+                        const txt = normalizar(opt.textContent);
+                        return txt === alvo || txt.includes(alvo);
+                    });
+
+                    if (opcaoMatch) {
+                        selectNat.value = opcaoMatch.value;
+                        selectNat.dispatchEvent(new Event('input', { bubbles: true }));
+                        selectNat.dispatchEvent(new Event('change', { bubbles: true }));
+                        selectNat.dispatchEvent(new Event('blur', { bubbles: true }));
+                        if (typeof $ !== 'undefined') $(selectNat).trigger('change');
+                    }
+                }
+            }, { textoNatureza: dados.naturezaSipom });
+        }
+
+        // 2. Data e Hora
+        if (dados.dataHoraFormatada) {
+            console.log(`[+] Preenchendo Data e Hora: "${dados.dataHoraFormatada}"...`);
+            await page.evaluate(({ val }) => {
+                const input = document.querySelector('input#data_hora, input[name="data_hora"]');
+                if (input) {
+                    input.value = val;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            }, { val: dados.dataHoraFormatada });
+        }
+
+        // 3. Unidade Militar - Local do fato (Select2: #select2-unidade-container)
+        const opmLocalAlvo = dados.opmLocal || '1ªCIA/21ºBPM';
+        console.log(`[+] Selecionando Unidade Militar: "${opmLocalAlvo}"...`);
+        try {
+            const comboUnidade = page.locator('#select2-unidade-container, span[id*="unidade-container"]').first();
+            if (await comboUnidade.isVisible({ timeout: 3000 })) {
+                await comboUnidade.click({ force: true });
+                await page.waitForTimeout(400);
+
+                const searchInput = page.locator('.select2-container--open input.select2-search__field').first();
+                if (await searchInput.isVisible({ timeout: 2000 })) {
+                    await searchInput.fill(opmLocalAlvo);
                     await page.waitForTimeout(600);
                     await page.keyboard.press('Enter');
                 }
             }
+        } catch (e) {
+            console.warn('⚠️ Falha na Unidade Militar:', e.message);
         }
 
-        // 3. Endereço (Rua, Número, Bairro, Cidade)
-        if (dados.rua) {
-            const inputRua = page.locator('input[name="rua"], input[name="endereco"]').first();
-            if (await inputRua.isVisible({ timeout: 2000 })) {
-                await inputRua.fill(dados.rua);
+        // 4. SELEÇÃO OBRIGATÓRIA DO ENDEREÇO VIA GOOGLE PLACES (Imagens 2 e 3)
+        const enderecoBusca = `${dados.rua || ''}, ${dados.numero || '201'}, ${dados.bairro || ''}, Fortaleza`;
+        console.log(`[+] Digitando endereço para acionar Google Places: "${enderecoBusca}"...`);
+
+        const inputEndereco = page.locator('input[name="endereco"], #location-input').first();
+        if (await inputEndereco.isVisible({ timeout: 4000 })) {
+            await inputEndereco.focus();
+            await inputEndereco.click();
+            await inputEndereco.fill('');
+            await inputEndereco.pressSequentially(enderecoBusca, { delay: 70 });
+
+            // Aguarda o container de sugestões do Google aparecer na tela (.pac-container / .pac-item)
+            console.log('[+] Aguardando sugestão do Google Maps...');
+            const sugestaoGoogle = page.locator('.pac-container .pac-item').first();
+
+            try {
+                await sugestaoGoogle.waitFor({ state: 'visible', timeout: 5000 });
+                console.log('[+] Clicando na sugestão do Google Maps...');
+                await sugestaoGoogle.click({ force: true });
+            } catch (err) {
+                console.warn('⚠️ Sugestão visual do Google não clicada via mouse, forçando via teclado...');
+                await page.keyboard.press('ArrowDown');
+                await page.keyboard.press('Enter');
+            }
+
+            await page.waitForTimeout(1200);
+        }
+
+        // 5. OPM - Atendeu a ocorrência (Select2: #select2-opm-container)
+        const opmAtendeuAlvo = dados.opmAtendeu || dados.opmLocal || '1ªCIA/21ºBPM';
+        console.log(`[+] Selecionando OPM Atendeu: "${opmAtendeuAlvo}"...`);
+        try {
+            const comboOpm = page.locator('#select2-opm-container, span[id*="opm-container"]').first();
+            if (await comboOpm.isVisible({ timeout: 3000 })) {
+                await comboOpm.click({ force: true });
+                await page.waitForTimeout(400);
+
+                const searchInput = page.locator('.select2-container--open input.select2-search__field').first();
+                if (await searchInput.isVisible({ timeout: 2000 })) {
+                    await searchInput.fill(opmAtendeuAlvo);
+                    await page.waitForTimeout(600);
+                    await page.keyboard.press('Enter');
+                }
+            }
+        } catch (e) {
+            console.warn('⚠️ Falha na OPM Atendeu:', e.message);
+        }
+
+        // 6. Viatura da Ocorrência
+        if (dados.viatura) {
+            const inputVtr = page.locator('input[name="viatura"], input[name="viatura_ocorrencia"]').first();
+            if (await inputVtr.isVisible({ timeout: 2000 })) {
+                await inputVtr.fill(dados.viatura);
             }
         }
 
-        if (dados.numero) {
-            const inputNum = page.locator('input[name="numero"], input[name="endereco_numero"]').first();
-            if (await inputNum.isVisible({ timeout: 2000 })) {
-                await inputNum.fill(dados.numero);
+        // 7. Nº do HT (mantido em branco por instrução)
+        console.log('[+] Campo Nº do HT mantido em branco.');
+
+        // 8. Nº da Ocorrência (input[name="numero_ocorrencia"])
+        if (dados.fichaCiops || dados.numeroOcorrencia) {
+            const valNumeroOcorrencia = dados.numeroOcorrencia || dados.fichaCiops;
+            console.log(`[+] Preenchendo Nº da Ocorrência: "${valNumeroOcorrencia}"...`);
+            const inputNumOcorrencia = page.locator('input[name="numero_ocorrencia"]').first();
+            if (await inputNumOcorrencia.isVisible({ timeout: 2000 })) {
+                await inputNumOcorrencia.fill(valNumeroOcorrencia);
             }
         }
 
-        console.log('✅ Formulário inicial preenchido!');
+        await page.waitForTimeout(1000);
+        console.log('✅ Formulário Inicial preenchido e local selecionado!');
+
     } catch (error) {
-        console.warn('⚠️ Falha ao preencher Formulário 1:', error.message);
+        console.warn('⚠️ Falha ao preencher Formulário Inicial:', error.message);
     }
 }
 
 /**
- * FUNÇÃO ORQUESTRADORA: Executa o preenchimento completo de todas as abas
+ * FUNÇÃO ORQUESTRADORA: Cria a ocorrência (Formulário 1) e preenche os modais na página resultante
  */
 export async function preencherSipomCompleto(dados) {
     console.log('\n==================================================');
@@ -784,44 +973,70 @@ export async function preencherSipomCompleto(dados) {
     const page = await obterPaginaGlobal();
 
     try {
-        // 1. Formulário Inicial / Dados Gerais
-        if (typeof preencherFormulario1 === 'function') {
-            await preencherFormulario1(page, dados);
+        // 1. Redireciona para a página de criação, se ainda não estiver nela
+        const urlCriar = 'https://sipom.pm.ce.gov.br/ocorrencias/ocorrencias-criar';
+        if (!page.url().includes('/ocorrencias/ocorrencias-criar')) {
+            console.log(`[+] Navegando para a página de cadastro inicial: ${urlCriar}`);
+            await page.goto(urlCriar, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await page.waitForTimeout(1000);
         }
 
-        // 2. Aba Pessoas
+        // 2. Preenche o Formulário Inicial
+        await preencherFormulario1(page, dados);
+
+        // 3. Submissão Controlada com Clique Explícito no Botão
+        console.log('[+] Clicando no botão "Registrar Ocorrência"...');
+
+        const btnSalvar = page.locator('button:has-text("Registrar Ocorrência"), button:has-text("Salvar"), input[value="Registrar Ocorrência"]').first();
+        await btnSalvar.waitFor({ state: 'visible', timeout: 5000 });
+
+        // Dispara a navegação e o clique de forma sincronizada
+        await Promise.all([
+            page.waitForURL((url) => url.href.includes('/ocorrencias-exibir/'), { timeout: 20000 }).catch(() => {
+                console.log('ℹ️ Transição por URL direta não detectada. Verificando DOM...');
+            }),
+            btnSalvar.click({ force: true })
+        ]);
+
+        await page.waitForTimeout(2000);
+        console.log(`[+] Ocorrência Registrada! URL atual: ${page.url()}`);
+
+        // 4. Aguarda explicitamente as abas superiores na página de edição/exibição
+        console.log('[+] Aguardando o carregamento das abas de edição...');
+        const seletorAba = page.locator('#pessoas-tab, #materiais-tab, #composicoes-tab, a:has-text("Pessoas")').first();
+        await seletorAba.waitFor({ state: 'visible', timeout: 15000 });
+
+        console.log('✅ Nova página carregada! Iniciando preenchimento dos modais...\n');
+
+        // 5. Preenchimento Sequencial das Abas e Modais
         if (dados.pessoas && dados.pessoas.length > 0) {
             await preencherAbaPessoas(page, dados);
         }
 
-        // 3. Aba Procedimentos
         if (dados.procedimento) {
             await preencherModalProcedimento(page, dados.procedimento);
         }
 
-        // 4. Aba Histórico
         if (dados.historico) {
             await preencherModalHistorico(page, dados.historico);
         }
 
-        // 5. Aba Materiais
         if (dados.materiais && dados.materiais.length > 0) {
             await preencherModalMaterial(page, dados.materiais);
         }
 
-        // 6. Aba Composição
-        if (dados.composicao && dados.composicao.length > 0 && typeof preencherModalComposicao === 'function') {
+        if (dados.composicao && dados.composicao.length > 0) {
             await preencherModalComposicao(page, dados.composicao);
         }
 
         console.log('\n==================================================');
-        console.log('✅ Ocorrência preenchida com sucesso no SIPOM!');
+        console.log('🎉 Ocorrência completa e modais gravados com sucesso!');
         console.log('==================================================\n');
 
-        return { sucesso: true };
+        return { sucesso: true, url: page.url() };
 
     } catch (error) {
-        console.error('❌ Erro durante o preenchimento completo do SIPOM:', error.message);
+        console.error('❌ Falha no fluxo orquestrador do SIPOM:', error.message);
         throw error;
     }
 }

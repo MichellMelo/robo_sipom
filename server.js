@@ -4,7 +4,6 @@ import { Bot, InlineKeyboard } from 'grammy';
 import { parseRelatorioSipom } from './parserSipom.js';
 import {
     obterPaginaGlobal,
-    preencherFormulario1,
     preencherAbaPessoas,
     preencherModalProcedimento,
     preencherModalHistorico,
@@ -16,29 +15,20 @@ import {
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Configuração do Express para JSON e formulários
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Rota de Health Check / Ping
-app.get('/ping', (req, res) => {
-    res.status(200).send('pong');
-});
+app.get('/ping', (req, res) => res.status(200).send('pong'));
 
-// Inicialização do Bot do Telegram via grammY
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-
 if (!TELEGRAM_TOKEN) {
     console.error('[-] ERRO CRÍTICO: TELEGRAM_TOKEN não configurado nas variáveis de ambiente.');
     process.exit(1);
 }
 
 const bot = new Bot(TELEGRAM_TOKEN);
-
-// Guarda o relatório processado na sessão em memória por Chat ID
 const sessoesUsuarios = new Map();
 
-// Constrói os botões do Menu no Telegram
 function criarMenuOpcoes() {
     return new InlineKeyboard()
         .text('1. Criar Ocorrência Completa', 'opcao_1').row()
@@ -50,46 +40,47 @@ function criarMenuOpcoes() {
         .text('🚀 7. FAZER TUDO AGORA (Modais)', 'opcao_7');
 }
 
-// Tratador global de erros do Bot
 bot.catch((err) => {
     console.error('[!] Erro no bot do Telegram:', err.error?.message || err.message);
 });
 
-// Manipulador de mensagens recebidas no Telegram
+// RECEBIMENTO DO RELATÓRIO E ABERTURA DO NAVEGADOR
 bot.on('message:text', async (ctx) => {
     const textoMensagem = ctx.message.text;
 
     if (textoMensagem === '/start') {
-        return ctx.reply('👋 Olá! Envie o relatório da ocorrência em texto para iniciar o cadastro no SIPOM.');
+        return ctx.reply('👋 Olá! Envie o texto do relatório da ocorrência para darmos início ao cadastro no SIPOM.');
     }
 
-    console.log(`[+] Mensagem recebida do usuário ${ctx.from.username || ctx.from.id}`);
+    console.log(`\n[+] Mensagem recebida do usuário ${ctx.from.username || ctx.from.id}`);
+    await ctx.reply('📥 *Relatório recebido!* Extraindo dados e abrindo o navegador Chrome...', { parse_mode: 'Markdown' });
 
     try {
-        // 1. Parser: Extrai o relatório para objeto em memória
         const dadosEstruturados = parseRelatorioSipom(textoMensagem);
         sessoesUsuarios.set(ctx.chat.id, dadosEstruturados);
 
-        console.log('[+] Dados extraídos com sucesso:', dadosEstruturados.fichaCiops || 'Sem Ficha');
+        console.log('[+] Dados extraídos com sucesso. Ficha CIOPS:', dadosEstruturados.fichaCiops || 'S/N');
 
-        // 2. Exibe o Menu Inline no Telegram
+        console.log('[+] Lançando o navegador Chrome...');
+        await obterPaginaGlobal();
+
         await ctx.reply(
-            `📄 *RELATÓRIO CARREGADO COM SUCESSO!*\n\n` +
+            `📄 *RELATÓRIO CARREGADO E NAVEGADOR PRONTO!*\n\n` +
             `📌 *Ficha CIOPS:* \`${dadosEstruturados.fichaCiops || 'S/N'}\`\n` +
-            `🚔 *Natureza:* ${dadosEstruturados.naturezaSipom || 'N/A'}\n\n` +
-            `Escolha uma opção de execução no menu abaixo:`,
+            `ótimo *Natureza:* ${dadosEstruturados.naturezaSipom || 'N/A'}\n\n` +
+            `Escolha uma opção no menu abaixo para preencher no SIPOM:`,
             {
                 parse_mode: 'Markdown',
                 reply_markup: criarMenuOpcoes()
             }
         );
     } catch (error) {
-        console.error('[-] Erro ao ler relatório:', error.message);
-        await ctx.reply(`❌ *Erro ao processar relatório:* ${error.message}`, { parse_mode: 'Markdown' });
+        console.error('[-] Erro ao processar ou abrir o navegador:', error.message);
+        await ctx.reply(`❌ *Falha ao iniciar:* ${error.message}`, { parse_mode: 'Markdown' });
     }
 });
 
-// Manipulador de cliques nos botões do Menu
+// EXECUÇÃO DAS AÇÕES DO MENU
 bot.on('callback_query:data', async (ctx) => {
     const chatId = ctx.chat.id;
     const opcao = ctx.callbackQuery.data;
@@ -100,15 +91,21 @@ bot.on('callback_query:data', async (ctx) => {
         return;
     }
 
-    await ctx.answerCallbackQuery({ text: 'Iniciando automação...' });
-    await ctx.reply(`⏳ *Executando a opção selecionada no SIPOM...*`, { parse_mode: 'Markdown' });
+    await ctx.answerCallbackQuery({ text: 'Executando no SIPOM...' });
+    await ctx.reply(`⏳ *Preenchendo no SIPOM...*`, { parse_mode: 'Markdown' });
 
     try {
         const page = await obterPaginaGlobal();
 
         if (opcao === 'opcao_1') {
             const res = await preencherSipomCompleto(dados);
-            await ctx.reply(`✅ *Ocorrência Completa Registrada!*\n📌 *ID:* \`${res.idSipom}\`\n🔗 [Visualizar Ocorrência](${res.url})`, { parse_mode: 'Markdown', disable_web_page_preview: true });
+
+            // Sanitiza strings em Markdown para evitar o erro 400 Bad Request do grammY
+            const urlFormatada = res?.url ? res.url.replace(/_/g, '\\_') : '';
+            await ctx.reply(
+                `✅ *Ocorrência Registrada com Sucesso!*\n\n🔗 ${urlFormatada}`,
+                { parse_mode: 'Markdown', disable_web_page_preview: true }
+            );
         } else if (opcao === 'opcao_2') {
             await preencherAbaPessoas(page, dados);
             await ctx.reply('✅ *Aba Pessoas preenchida com sucesso!*', { parse_mode: 'Markdown' });
@@ -120,27 +117,25 @@ bot.on('callback_query:data', async (ctx) => {
             await ctx.reply('✅ *Modal Histórico preenchido com sucesso!*', { parse_mode: 'Markdown' });
         } else if (opcao === 'opcao_5') {
             if (!dados.materiais || dados.materiais.length === 0) {
-                await ctx.reply('⚠️ *Nenhum material extraído neste relatório.*', { parse_mode: 'Markdown' });
+                await ctx.reply('⚠️ *Nenhum material/veículo identificado no relatório.*', { parse_mode: 'Markdown' });
             } else {
                 await preencherModalMaterial(page, dados.materiais);
-                await ctx.reply('✅ *Aba e Modal de Materiais preenchidos!*', { parse_mode: 'Markdown' });
+                await ctx.reply('✅ *Modal Materiais preenchido com sucesso!*', { parse_mode: 'Markdown' });
             }
         } else if (opcao === 'opcao_6') {
-            await preencherModalComposicao(page, dados.composicao);
-            await ctx.reply('✅ *Modal Composição preenchido com sucesso!*', { parse_mode: 'Markdown' });
-
+            if (!dados.composicao || dados.composicao.length === 0) {
+                await ctx.reply('⚠️ *Nenhuma composição identificada no relatório.*', { parse_mode: 'Markdown' });
+            } else {
+                await preencherModalComposicao(page, dados.composicao);
+                await ctx.reply('✅ *Modal Composição preenchido com sucesso!*', { parse_mode: 'Markdown' });
+            }
         } else if (opcao === 'opcao_7') {
             await preencherAbaPessoas(page, dados);
             if (dados.procedimento) await preencherModalProcedimento(page, dados.procedimento);
             if (dados.historico) await preencherModalHistorico(page, dados.historico);
-
-            // Só executa se de fato houverem materiais extraídos no relatório
-            if (dados.materiais && dados.materiais.length > 0) {
-                await preencherModalMaterial(page, dados.materiais);
-            }
-
-            if (dados.composicao) await preencherModalComposicao(page, dados.composicao);
-            await ctx.reply('🎉 *TODOS OS MODAIS EXISTENTES FORAM PREENCHIDOS COM SUCESSO!*', { parse_mode: 'Markdown' });
+            if (dados.materiais && dados.materiais.length > 0) await preencherModalMaterial(page, dados.materiais);
+            if (dados.composicao && dados.composicao.length > 0) await preencherModalComposicao(page, dados.composicao);
+            await ctx.reply('🎉 *TODOS OS MODAIS FORAM PREENCHIDOS E GRAVADOS COM SUCESSO!*', { parse_mode: 'Markdown' });
         }
 
         await ctx.reply('Deseja realizar mais alguma ação nesta mesma ocorrência?', {
@@ -148,39 +143,33 @@ bot.on('callback_query:data', async (ctx) => {
         });
 
     } catch (error) {
-        console.error('[-] Erro na automação local:', error.message);
+        console.error('[-] Erro na automação:', error.message);
         await ctx.reply(`❌ *Falha na Automação:* ${error.message}`, { parse_mode: 'Markdown' });
     }
 });
 
-// Inicialização do servidor HTTP Express
 const server = app.listen(PORT, () => {
     console.log(`🤖 Servidor do Robô SIPOM rodando na porta ${PORT}`);
 });
 
-// Inicialização do Polling do Telegram
-bot.start().then(() => {
-    console.log('[+] Bot do Telegram conectado com sucesso via grammY!');
+// INICIALIZAÇÃO DO BOT
+bot.start({
+    onStart: async (botInfo) => {
+        console.log(`[+] Bot do Telegram @${botInfo.username} conectado com sucesso!`);
+
+        const chatIdPadrao = process.env.TELEGRAM_CHAT_ID;
+        if (chatIdPadrao) {
+            try {
+                await bot.api.sendMessage(
+                    chatIdPadrao,
+                    '👋 *Servidor do Robô SIPOM Ativo e Aguardando!*\n\nEnvie o texto do relatório da ocorrência para iniciarmos.',
+                    { parse_mode: 'Markdown' }
+                );
+            } catch (err) {
+                console.warn('⚠️ Nota sobre envio de mensagem automática:', err.message);
+            }
+        }
+    }
 }).catch((err) => {
     console.error('[-] Falha ao conectar ao Polling do Telegram:', err.message);
 });
-
-// Encerramento limpo
-const encerrarServico = async (sinal) => {
-    console.log(`\n[!] Recebido sinal ${sinal}. Encerrando o robô graciosamente...`);
-
-    try {
-        await bot.stop();
-        console.log('[+] Polling do Telegram interrompido.');
-    } catch (err) {
-        console.error('[-] Erro ao parar polling do Telegram:', err.message);
-    }
-
-    server.close(() => {
-        console.log('[+] Servidor HTTP encerrado.');
-        process.exit(0);
-    });
-};
-
-process.on('SIGTERM', () => encerrarServico('SIGTERM'));
-process.on('SIGINT', () => encerrarServico('SIGINT'));
