@@ -296,15 +296,16 @@ export function parseRelatorioSipom(texto) {
         };
     }
 
-    // 2. EXTRAÇÃO DINÂMICA DE MATERIAIS, DROGAS, DINHEIRO E UTENSÍLIOS
+    // EXTRAÇÃO DE TODOS OS MATERIAIS (Maconha, Cocaína, Dinheiro, Outros, Veículos)
     const materiais = [];
-    const textoSemSA = !/Material:\s*S\/A/i.test(texto);
+    const blocoMaterial = texto.split(/Material:/i)[1]?.split(/(?:Histórico|Qualificação|Composição|Delegado):/i)[0] || '';
 
-    if (textoSemSA) {
+    if (blocoMaterial && !/S\/A/i.test(blocoMaterial)) {
+
         // A. Veículos
-        const matchVeiculo = texto.match(/Ve[ií]culo:\s*([^\r\n]+)/i) || texto.match(/(?:ve[ií]culo|autom[oó]vel|motocicleta|moto)\s+([\w\s.-]+?),\s*cor\s+(\w+).*?placa\s*([\w\d]+)/i);
+        const matchVeiculo = blocoMaterial.match(/Ve[ií]culo:\s*([^\r\n]+)/i);
         if (matchVeiculo) {
-            const linhaVeiculo = matchVeiculo[0] || matchVeiculo[1];
+            const linhaVeiculo = matchVeiculo[1];
             const matchPlaca = linhaVeiculo.match(/placa\s*([A-Z0-9]{7})/i) || linhaVeiculo.match(/([A-Z]{3}-?\d[A-Z0-9]\d{2})/i);
             const placa = matchPlaca ? matchPlaca[1].replace('-', '').toUpperCase() : '';
             const situacao = linhaVeiculo.toLowerCase().includes('recuperad') ? 'Recuperado' : 'Apreendido';
@@ -320,33 +321,37 @@ export function parseRelatorioSipom(texto) {
             }
         }
 
-        // B. Entorpecentes (Captura flexível de gramas, trouxinhas e valores entre parênteses)
-        const tiposDrogas = [
-            { regex: /(?:Droga:)?\s*(skank|skunk)\s*(?:\([^)]*\))?[:\-=]?\s*\(?(\d+(?:[.,]\d+)?)\s*g\)?/i, tipo: 'Skank' },
-            { regex: /(?:Droga:)?\s*(maconha)\s*(?:\([^)]*\))?[:\-=]?\s*\(?(\d+(?:[.,]\d+)?)\s*g\)?/i, tipo: 'Maconha' },
-            { regex: /(?:Droga:)?\s*(haxixe)\s*(?:\([^)]*\))?[:\-=]?\s*\(?(\d+(?:[.,]\d+)?)\s*g\)?/i, tipo: 'Haxixe' },
-            { regex: /(?:Droga:)?\s*(coca[ií]na|coca)\s*(?:\([^)]*\))?[:\-=]?\s*\(?(\d+(?:[.,]\d+)?)\s*g\)?/i, tipo: 'Cocaína' },
-            { regex: /(?:Droga:)?\s*(crack)\s*(?:\([^)]*\))?[:\-=]?\s*\(?(\d+(?:[.,]\d+)?)\s*g\)?/i, tipo: 'Crack' },
-            { regex: /(?:Droga:)?\s*(ecstasy|mdma)\s*(?:\([^)]*\))?[:\-=]?\s*\(?(\d+(?:[.,]\d+)?)\s*g\)?/i, tipo: 'Ecstasy/MDMA' }
-        ];
+        // B. Captura TODAS as linhas de Droga (ex: Skank 60g, Maconha 141g, Cocaína 15g)
+        const linhasDroga = blocoMaterial.matchAll(/(?:Droga|Entorpecente):\s*([^(\r\n]+)(?:\([^)]*\))?\s*(?:\(?(\d+(?:[.,]\d+)?)\s*g\)?)?/gi);
 
-        // Busca todas as linhas sob o cabeçalho Material
-        const blocoMaterial = texto.split(/Material:/i)[1]?.split(/(?:Histórico|Qualificação|Composição):/i)[0] || '';
+        for (const match of linhasDroga) {
+            const nomeBruto = match[1] ? match[1].trim() : '';
 
-        tiposDrogas.forEach(item => {
-            const matches = blocoMaterial.matchAll(new RegExp(item.regex, 'gi'));
-            for (const match of matches) {
-                if (match && match[2]) {
-                    materiais.push({
-                        tipo: 'Droga',
-                        nomeDroga: item.tipo,
-                        quantidade: match[2].replace(',', '.')
-                    });
-                }
+            // Extrai a quantidade em gramas
+            const matchGrama = match[0].match(/(\d+(?:[.,]\d+)?)\s*g/i);
+            const gramas = matchGrama ? matchGrama[1].replace(',', '.') : (match[2] ? match[2].replace(',', '.') : '');
+
+            if (nomeBruto && gramas) {
+                // Preserva o nome extraído mantendo opções como Skank, Skunk, Maconha, Cocaína, Crack, etc.
+                let nomeDrogaSipom = nomeBruto;
+                const nomeUpper = nomeBruto.toUpperCase();
+
+                if (nomeUpper.includes('SKANK') || nomeUpper.includes('SKUNK')) nomeDrogaSipom = 'Skank';
+                else if (nomeUpper.includes('COCA')) nomeDrogaSipom = 'Cocaína';
+                else if (nomeUpper.includes('CRACK')) nomeDrogaSipom = 'Crack';
+                else if (nomeUpper.includes('ECSTASY') || nomeUpper.includes('MDMA')) nomeDrogaSipom = 'Ecstasy/MDMA';
+                else if (nomeUpper.includes('MACONHA')) nomeDrogaSipom = 'Maconha';
+                else if (nomeUpper.includes('HAXIXE')) nomeDrogaSipom = 'Haxixe';
+
+                materiais.push({
+                    tipo: 'Droga',
+                    nomeDroga: nomeDrogaSipom,
+                    quantidade: gramas
+                });
             }
-        });
+        }
 
-        // C. Dinheiro em Espécie (Ex: Dinheiro: R$ 435,50)
+        // C. Dinheiro (Ex: Dinheiro: R$ 435,50)
         const matchDinheiro = blocoMaterial.match(/Dinheiro:\s*R\$\s*([\d.,]+)/i);
         if (matchDinheiro) {
             materiais.push({
@@ -355,12 +360,13 @@ export function parseRelatorioSipom(texto) {
             });
         }
 
-        // D. Outros Objetos / Utensílios
-        const matchUtensilio = blocoMaterial.match(/Utens[ií]lio:\s*([^\r\n]+)/i);
-        if (matchUtensilio) {
+        // D. Outros / Utensílios (Ex: Outros: 01 Balança... ou Utensílio: ...)
+        const matchOutros = blocoMaterial.match(/(?:Outros|Utens[ií]lio):\s*([^\r\n]+)/i);
+        if (matchOutros) {
             materiais.push({
                 tipo: 'Outros',
-                descricao: matchUtensilio[1].trim()
+                descricao: matchOutros[1].trim(),
+                quantidade: '1'
             });
         }
     }

@@ -499,158 +499,181 @@ export async function preencherModalHistorico(page, textoHistorico) {
 }
 
 /**
- * ABA 4: MODAL DE MATERIAIS (#modalMaterial)
+ * ABA MATERIAIS: Transição garantida de aba e abertura do modal
  */
-export async function preencherModalMaterial(page, dadosMaterial) {
-    const lista = Array.isArray(dadosMaterial) ? dadosMaterial : dadosMaterial?.lista || [];
+export async function preencherModalMaterial(page, materiais) {
+    const lista = Array.isArray(materiais) ? materiais : [];
     if (!lista.length) return;
 
     try {
         console.log('\n[+] Acessando Aba: Materiais...');
 
-        // 1. Clica na aba de Materiais usando o ID exato da Imagem 1 (#materiais-tab)
-        const abaMateriais = page.locator('#materiais-tab').first();
-        await abaMateriais.waitFor({ state: 'visible', timeout: 5000 });
-        await abaMateriais.click();
-        await page.waitForTimeout(800);
+        // 1. Clica na aba de materiais usando o ID exato (#materiais-tab)
+        const abaMat = page.locator('#materiais-tab, a[href="#materiais"]').first();
+        await abaMat.waitFor({ state: 'visible', timeout: 5000 });
+        await abaMat.click({ force: true });
+
+        // Aguarda a aba se tornar ativa no DOM
+        await page.waitForSelector('#materiais.active, #materiais.show', { timeout: 5000 }).catch(() => { });
+        await page.waitForTimeout(600);
 
         for (const item of lista) {
-            console.log(`[+] Abrindo Modal de Material...`);
+            console.log(`[+] Adicionando Material: [${item.tipo}]...`);
 
-            // 2. Clica no botão da Imagem 2 (button[data-target="#modalMaterial"])
+            // 2. Abertura do Modal de Material via disparador Bootstrap JS no DOM
             await page.evaluate(() => {
                 if (typeof $ !== 'undefined' && $('#modalMaterial').length) {
                     $('#modalMaterial').modal('show');
                 } else {
-                    const btn = document.querySelector('button[data-target="#modalMaterial"]');
+                    const btn = document.querySelector('#materiais button[data-target="#modalMaterial"]') ||
+                        document.querySelector('button[data-target="#modalMaterial"]');
                     if (btn) btn.click();
                 }
             });
 
-            // Aguarda a exibição do modal
-            const modalMaterial = page.locator('#modalMaterial');
-            await modalMaterial.waitFor({ state: 'visible', timeout: 10000 });
-            await page.waitForTimeout(600);
-
-            // 3. Preenchimento do Tipo de Material (select[name="material_tipo"])
-            const tipoDesejado = item.tipo || 'Veículo';
-            console.log(`[+] Selecionando Tipo: "${tipoDesejado}"...`);
-
-            await page.evaluate(({ textoAlvo }) => {
-                const select = document.querySelector('#modalMaterial select[name="material_tipo"]');
-                if (!select) return;
-
-                const normalizar = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
-                const alvo = normalizar(textoAlvo);
-
-                const opcaoEncontrada = Array.from(select.options).find(opt => {
-                    const textoOpt = normalizar(opt.textContent);
-                    return textoOpt === alvo || textoOpt.includes(alvo);
-                });
-
-                if (opcaoEncontrada) {
-                    select.value = opcaoEncontrada.value;
-                    select.dispatchEvent(new Event('change', { bubbles: true }));
-                    select.dispatchEvent(new Event('input', { bubbles: true }));
-                    if (typeof $ !== 'undefined') $(select).trigger('change');
+            // Fallback de clique pelo Playwright focado estritamente dentro do painel #materiais
+            const modal = page.locator('#modalMaterial, div.modal.show').first();
+            try {
+                await modal.waitFor({ state: 'visible', timeout: 4000 });
+            } catch (e) {
+                const btnAbrir = page.locator('#materiais button[data-target="#modalMaterial"]').first();
+                if (await btnAbrir.isVisible({ timeout: 2000 })) {
+                    await btnAbrir.click({ force: true });
                 }
-            }, { textoAlvo: tipoDesejado });
-
-            await page.waitForTimeout(800);
-
-            // 4. Fluxo específico se for VEÍCULO
-            if (tipoDesejado.toLowerCase().includes('veic') || tipoDesejado.toLowerCase().includes('veículo')) {
-                const valorSituacao = item.situacaoValue || (item.situacao && item.situacao.toLowerCase().includes('apreend') ? '1' : '2');
-                console.log(`[+] Selecionando Situação (value=${valorSituacao})...`);
-
-                await page.evaluate(({ val }) => {
-                    const selectSit = document.querySelector('#modalMaterial select[name="situacao"]');
-                    if (selectSit) {
-                        selectSit.value = val;
-                        selectSit.dispatchEvent(new Event('change', { bubbles: true }));
-                        selectSit.dispatchEvent(new Event('input', { bubbles: true }));
-                        if (typeof $ !== 'undefined') $(selectSit).trigger('change');
-                    }
-                }, { val: valorSituacao });
-
-                await page.waitForTimeout(600);
-
-                const placaVeiculo = (item.placa || '').toUpperCase().trim();
-                if (placaVeiculo) {
-                    console.log(`[+] Preenchendo Placa: ${placaVeiculo}...`);
-                    const inputPlaca = page.locator('#modalMaterial input[name="placa"]').first();
-                    await inputPlaca.waitFor({ state: 'visible', timeout: 3000 });
-                    await inputPlaca.click();
-                    await inputPlaca.fill('');
-                    await inputPlaca.pressSequentially(placaVeiculo, { delay: 60 });
-
-                    await page.evaluate(({ val }) => {
-                        const input = document.querySelector('#modalMaterial input[name="placa"]');
-                        if (input) {
-                            input.value = val;
-                            input.dispatchEvent(new Event('input', { bubbles: true }));
-                            input.dispatchEvent(new Event('change', { bubbles: true }));
-                            input.dispatchEvent(new Event('blur', { bubbles: true }));
-                        }
-                    }, { val: placaVeiculo });
-                }
-
-                await page.waitForTimeout(1500); // Aguarda consulta/autocomp do SIPOM
+                await modal.waitFor({ state: 'visible', timeout: 5000 });
             }
 
-            // 5. Fluxo específico se for DROGA
-            else if (tipoDesejado.toLowerCase().includes('droga')) {
-                const nomeDrogaAlvo = item.nomeDroga || item.descricao || 'Crack';
-                console.log(`[+] Selecionando espécie da droga: "${nomeDrogaAlvo}"...`);
+            await page.waitForTimeout(500);
 
-                try {
-                    const comboDroga = page.locator('#modalMaterial .select2-container').last();
-                    await comboDroga.click({ force: true });
-                    await page.waitForTimeout(400);
+            // 3. Seleciona o Tipo de Material no combo
+            await page.evaluate(({ tipoMaterial }) => {
+                const selectTipo = document.querySelector('#modalMaterial select[name*="tipo"], #modalMaterial select');
+                if (selectTipo) {
+                    const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
+                    const alvo = norm(tipoMaterial);
 
-                    const searchInput = page.locator('.select2-container--open input.select2-search__field').first();
-                    if (await searchInput.isVisible({ timeout: 2000 })) {
-                        await searchInput.fill('');
-                        await searchInput.pressSequentially(nomeDrogaAlvo, { delay: 80 });
-                        await page.waitForTimeout(600);
-                        await page.keyboard.press('Enter');
+                    const opt = Array.from(selectTipo.options).find(o => norm(o.textContent).includes(alvo));
+                    if (opt) {
+                        selectTipo.value = opt.value;
+                        selectTipo.dispatchEvent(new Event('change', { bubbles: true }));
+                        if (typeof $ !== 'undefined') $(selectTipo).trigger('change');
                     }
-                } catch (e) {
-                    console.warn('⚠️ Erro no Select2 da Droga:', e.message);
+                }
+            }, { tipoMaterial: item.tipo });
+
+            await page.waitForTimeout(500);
+
+            // 4. Preenchimento de Campos Específicos por Tipo
+
+            //Dinheiro
+            if (item.tipo === 'Dinheiro') {
+                const valDinheiro = String(item.valor || '').trim();
+                console.log(`[+] Preenchendo Valor do Dinheiro: "R$ ${valDinheiro}"...`);
+
+                const inputDinheiro = page.locator('input[name="dinheiro_quantidade"], #modalMaterial input[name*="dinheiro"]').first();
+                if (await inputDinheiro.isVisible({ timeout: 3000 })) {
+                    await inputDinheiro.focus();
+                    await inputDinheiro.click();
+                    await inputDinheiro.fill('');
+                    await inputDinheiro.pressSequentially(valDinheiro, { delay: 40 });
+                }
+            }
+
+            //Outros
+            else if (item.tipo === 'Outros') {
+                // input[name="outros_descricao"]
+                if (item.descricao) {
+                    console.log(`[+] Preenchendo Descrição (Outros): "${item.descricao}"...`);
+                    const inputDesc = page.locator('input[name="outros_descricao"], #modalMaterial input[name*="descricao"]').first();
+                    if (await inputDesc.isVisible({ timeout: 2000 })) {
+                        await inputDesc.focus();
+                        await inputDesc.fill('');
+                        await inputDesc.pressSequentially(item.descricao.toUpperCase(), { delay: 20 });
+                    }
+                }
+
+                // input[name="outros_quantidade"]
+                const qtdOutros = String(item.quantidade || '1');
+                console.log(`[+] Preenchendo Quantidade (Outros): "${qtdOutros}"...`);
+                const inputQtd = page.locator('input[name="outros_quantidade"], #modalMaterial input[name*="quantidade"]').first();
+                if (await inputQtd.isVisible({ timeout: 2000 })) {
+                    await inputQtd.fill(qtdOutros);
+                }
+            }
+
+            //Drogas
+            else if (item.tipo === 'Droga') {
+                if (item.nomeDroga) {
+                    console.log(`[+] Selecionando tipo de Droga no combo: "${item.nomeDroga}"...`);
+
+                    await page.evaluate(({ nome }) => {
+                        // Busca o select especificamente ligado ao campo "Droga"
+                        const selectDroga = document.querySelector('#modalMaterial select[name="droga_id"]') ||
+                            document.querySelector('#modalMaterial select[name*="droga"]') ||
+                            Array.from(document.querySelectorAll('#modalMaterial select')).find(s => {
+                                const label = s.previousElementSibling || s.parentElement.querySelector('label');
+                                return label && label.textContent.includes('Droga');
+                            });
+
+                        if (selectDroga) {
+                            const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
+                            const alvo = norm(nome);
+
+                            // Busca por igualdade, contendo o nome ou equivalências (Ex: Skank -> Skunk / Maconha)
+                            let opt = Array.from(selectDroga.options).find(o => {
+                                const txt = norm(o.textContent);
+                                return txt === alvo || txt.includes(alvo) || (alvo.includes('skank') && (txt.includes('skunk') || txt.includes('skank')));
+                            });
+
+                            // Fallback se não achar Skank exato: seleciona a primeira opção que contenha Maconha ou o primeiro item válido
+                            if (!opt && alvo.includes('skank')) {
+                                opt = Array.from(selectDroga.options).find(o => norm(o.textContent).includes('maconha'));
+                            }
+
+                            if (opt) {
+                                selectDroga.value = opt.value;
+                                selectDroga.dispatchEvent(new Event('input', { bubbles: true }));
+                                selectDroga.dispatchEvent(new Event('change', { bubbles: true }));
+                                if (typeof $ !== 'undefined') $(selectDroga).trigger('change');
+                            }
+                        }
+                    }, { nome: item.nomeDroga });
                 }
 
                 if (item.quantidade) {
-                    const inputQtd = page.locator('#modalMaterial input[name="droga_quantidade"]').first();
-                    if (await inputQtd.isVisible({ timeout: 2000 })) {
-                        await inputQtd.fill(String(item.quantidade));
+                    console.log(`[+] Preenchendo Quantidade/Gramas: "${item.quantidade}"...`);
+                    const inputQtdDroga = page.locator('#modalMaterial input[name="droga_quantidade"], #modalMaterial input[name*="quantidade"]').first();
+                    if (await inputQtdDroga.isVisible({ timeout: 2000 })) {
+                        await inputQtdDroga.focus();
+                        await inputQtdDroga.fill('');
+                        await inputQtdDroga.pressSequentially(String(item.quantidade), { delay: 40 });
                     }
                 }
             }
 
-            // 6. Confirma e Clica em Salvar/Atualizar (#btn-salvar-material)
-            console.log('[+] Gravando formulário de Material...');
-            await page.evaluate(() => {
-                const btnSalvar = document.querySelector('#btn-salvar-material') ||
-                    document.querySelector('#modalMaterial input[type="submit"]') ||
-                    document.querySelector('#modalMaterial button.btn-primary');
-                if (btnSalvar) btnSalvar.click();
-            });
+            //Veiculo
+            else if (item.tipo === 'Veículo' && item.placa) {
+                const inputPlaca = page.locator('#modalMaterial input[name*="placa"]').first();
+                if (await inputPlaca.isVisible({ timeout: 2000 })) {
+                    await inputPlaca.fill(item.placa);
+                }
+            }
 
-            // Aguarda o modal fechar
-            await modalMaterial.waitFor({ state: 'hidden', timeout: 10000 }).catch(async () => {
-                await page.evaluate(() => {
-                    if (typeof $ !== 'undefined') $('#modalMaterial').modal('hide');
-                });
-            });
+            await page.waitForTimeout(500);
 
-            await page.waitForTimeout(1000);
+            // 5. Salva o Material no Modal
+            console.log('[+] Clicando no botão Salvar...');
+            const btnSalvar = page.locator('#modalMaterial button.btn-success, #modalMaterial button:has-text("Salvar"), #modalMaterial input[type="submit"]').first();
+            await btnSalvar.click({ force: true });
+
+            await modal.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => { });
+            await page.waitForTimeout(800);
         }
 
-        console.log('✅ Materiais preenchidos e gravados com sucesso!');
+        console.log('✅ Todos os materiais foram cadastrados com sucesso!');
 
-    } catch (error) {
-        console.warn('⚠️ Erro no processo de Materiais:', error.message);
-        await page.keyboard.press('Escape').catch(() => { });
+    } catch (e) {
+        console.warn('⚠️ Falha ao preencher Materiais:', e.message);
     }
 }
 
