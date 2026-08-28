@@ -39,7 +39,7 @@ export const MAPA_BAIRROS_OPM = {
 };
 
 /**
- * Tabela De-Para com opções do SIPOM e equivalências de rua
+ * Tabela De-Para com opções do SIPOM e equivalências
  */
 export const MAPA_NATUREZAS_SIPOM = {
     'ABANDONO DE MATERIAL ILICITO': 'OUTRAS INFRAÇÕES À LEI DE ENTORPECENTES',
@@ -62,7 +62,7 @@ export const MAPA_NATUREZAS_SIPOM = {
  * Função principal de parsing para extrair dados do relatório textual
  */
 export function parseRelatorioSipom(texto) {
-    if (typeof texto === 'object') return texto; // Retorna direto se já for JSON
+    if (typeof texto === 'object') return texto;
 
     const fichaCiops = texto.match(/Ficha da CIOPS:\s*(\w+)/i)?.[1] || '';
     const naturezaBruta = texto.match(/Natureza da Ocorrência:\s*(.+)/i)?.[1]?.trim() || '';
@@ -78,17 +78,15 @@ export function parseRelatorioSipom(texto) {
     const bairro = (partesEnd[2] || '').toUpperCase();
     const cidade = partesEnd[3] || 'Fortaleza';
 
-    // Resolução dos mapeamentos com fallback seguro
+    // Resolução dos mapeamentos
     const opmLocal = MAPA_BAIRROS_OPM[bairro] || '2ªCIA/21ºBPM';
     const naturezaSipom = MAPA_NATUREZAS_SIPOM[naturezaBruta.toUpperCase()] || naturezaBruta;
 
     // Extração exata e limpa do Histórico
     const historicoMatch = texto.split(/Histórico:/i);
     let historico = '';
-
     if (historicoMatch.length > 1) {
-        // Pega tudo após 'Histórico:' e limpa seções posteriores caso existam
-        historico = historicoMatch[1].split(/(?:Vítima|Acusado|Delegado\/Delegacia|CMT|MOT|PAT):/i)[0].trim();
+        historico = historicoMatch[1].split(/(?:Vítima|Acusado|Delegado\/Delegacia|CMT|MOT|PAT|Material|Apreensão):/i)[0].trim();
     }
 
     // Extração de Pessoas
@@ -105,42 +103,62 @@ export function parseRelatorioSipom(texto) {
         pessoas.push({ nome: acusadoNome, vinculo: 'Infrator', mae: acusadoMae || '' });
     }
 
-    // Extração Dinâmica de Procedimento (Exemplos aceitos: "NOME / 132-4587/2026" ou "NOME / 12º DP / 4587 / 2026")
+    // Extração Dinâmica do Procedimento (ex: "EDUARDO COUTINHO / 132-4587/2026")
     const procLinha = texto.match(/Delegado\/Delegacia\/Procedimento:\s*(.+)/i)?.[1] || '';
     const procPartes = procLinha.split('/').map(s => s.trim());
 
     let delegado = procPartes[0] || '';
     let delegacia = '';
     let numeroProc = '';
-    let anoProc = new Date().getFullYear().toString(); // Fallback dinâmico para o ano atual caso não conste no texto
+    let anoProc = new Date().getFullYear().toString();
 
-    // 1ª Tentativa: Tenta capturar o formato compacto "CODIGO-NUMERO/ANO" (ex: 132-4587/2026) na linha inteira
     const matchEstruturado = procLinha.match(/(\d{2,4})\s*-\s*(\d+)(?:\/(\d{4}))?/);
-
     if (matchEstruturado) {
-        delegacia = matchEstruturado[1].trim(); // Pega dinamicamente os números antes do hífen (ex: 132)
-        numeroProc = matchEstruturado[2].trim(); // Pega dinamicamente os números após o hífen (ex: 4587)
-        if (matchEstruturado[3]) anoProc = matchEstruturado[3].trim(); // Pega dinamicamente o ano (ex: 2026)
+        delegacia = matchEstruturado[1].trim(); // Pega "132"
+        numeroProc = matchEstruturado[2].trim(); // Pega "4587"
+        if (matchEstruturado[3]) anoProc = matchEstruturado[3].trim(); // Pega "2026"
     } else {
-        // 2ª Tentativa: Caso venha separado por barras (ex: "DELEGADO / DELEGACIA / NUMERO / ANO")
-        if (procPartes[1]) delegacia = procPartes[1].replace(/\D/g, ''); // Extrai apenas os dígitos da delegacia
-        if (procPartes[2]) numeroProc = procPartes[2].replace(/\D/g, ''); // Extrai apenas os dígitos do número
-        if (procPartes[3]) anoProc = procPartes[3].replace(/\D/g, ''); // Extrai apenas os dígitos do ano
+        if (procPartes[1]) delegacia = procPartes[1].replace(/\D/g, '');
+        if (procPartes[2]) numeroProc = procPartes[2].replace(/\D/g, '');
+        if (procPartes[3]) anoProc = procPartes[3].replace(/\D/g, '');
     }
 
     const procedimento = {
         delegado,
-        delegacia, // Valor extraído dinamicamente
-        numero: numeroProc, // Valor extraído dinamicamente
-        ano: anoProc, // Valor extraído dinamicamente
+        delegacia,
+        numero: numeroProc,
+        ano: anoProc,
         procedimento: 'Boletim de Ocorrência - BO'
     };
 
-    // Extração de Materiais / Drogas
+    // Extração Dinâmica de Materiais, Drogas e Veículos
     const materiais = [];
-    const textoDrogas = texto.match(/(?:Material|Apreensão|Drogas?):\s*(.+)/i)?.[1] || texto;
 
-    // Procura padrões conhecidos de entorpecentes no texto do relatório
+    // 1. Captura de Veículos (Exemplo: "Veículo: Automóvel Volkswagen Polo... placa HYE2413... (recuperado)")
+    const matchVeiculo = texto.match(/Ve[ií]culo:\s*([^\r\n]+)/i) || texto.match(/(?:ve[ií]culo|autom[oó]vel|motocicleta|moto)\s+([\w\s.-]+?),\s*cor\s+(\w+).*?placa\s*([\w\d]+)/i);
+
+    if (matchVeiculo) {
+        const linhaVeiculo = matchVeiculo[0] || matchVeiculo[1];
+
+        // Extrai a placa (ex: HYE2413)
+        const matchPlaca = linhaVeiculo.match(/placa\s*([A-Z0-9]{7})/i) || linhaVeiculo.match(/([A-Z]{3}-?\d[A-Z0-9]\d{2})/i);
+        const placa = matchPlaca ? matchPlaca[1].replace('-', '').toUpperCase() : '';
+
+        // Extrai a situação (Apreendido ou Recuperado)
+        const situacao = linhaVeiculo.toLowerCase().includes('recuperad') ? 'Recuperado' : 'Apreendido';
+
+        if (placa) {
+            materiais.push({
+                tipo: 'Veículo',
+                descricao: linhaVeiculo.trim(),
+                placa: placa, // HYE2413
+                situacao: situacao, // Recuperado
+                situacaoValue: situacao === 'Recuperado' ? '2' : '1'
+            });
+        }
+    }
+
+    // 2. Captura de Entorpecentes / Drogas (Maconha, Crack, Cocaína, etc)
     const regioesEntorpecentes = [
         { regex: /(coca[ií]na|coca)\s*[:\-=]?\s*(\d+(?:[.,]\d+)?)/i, tipo: 'Cocaína' },
         { regex: /(crack)\s*[:\-=]?\s*(\d+(?:[.,]\d+)?)/i, tipo: 'Crack' },
@@ -149,7 +167,7 @@ export function parseRelatorioSipom(texto) {
     ];
 
     regioesEntorpecentes.forEach(item => {
-        const match = textoDrogas.match(item.regex);
+        const match = texto.match(item.regex);
         if (match) {
             materiais.push({
                 tipo: 'Droga',
@@ -159,16 +177,37 @@ export function parseRelatorioSipom(texto) {
         }
     });
 
-    // Extração da Composição
+    // Extração da Composição (CMT, MOT, PAT)
+    const MAPA_FUNCOES = {
+        'CMT': 'Comandante',
+        'MOT': 'Motorista',
+        'PAT': 'Patrulheiro'
+    };
+
     const composicao = [];
-    const linhasComp = texto.match(/(CMT|MOT|PAT):\s*(.+)/gi) || [];
+    // Busca qualquer linha que comece com CMT, MOT ou PAT
+    const linhasComp = texto.match(/(CMT|MOT|PAT)[\s:]+[^\r\n]+/gi) || [];
+
     linhasComp.forEach(linha => {
-        const match = linha.match(/(CMT|MOT|PAT):\s*([^\n\rMF]+)(?:M\.F\.:\s*([\d.-]+))?/i);
-        if (match) {
+        const siglaMatch = linha.match(/(CMT|MOT|PAT)/i);
+        if (!siglaMatch) return;
+
+        const sigla = siglaMatch[1].toUpperCase();
+
+        // Procura por sequências numéricas longas (Matrícula / M.F.)
+        const matchMatricula = linha.match(/(?:M\.F\.?|Matr[ií]cula)?\s*[:\-=]?\s*([\d.-]{6,12})/i) || linha.match(/(\d{6,9})/);
+        const matriculaLimpa = matchMatricula ? matchMatricula[1].replace(/\D/g, '') : '';
+
+        // Nome do policial
+        const nomeLimpo = linha.replace(/(CMT|MOT|PAT)[\s:]+/i, '')
+            .replace(/(?:M\.F\.?|Matr[ií]cula)?\s*[:\-=]?\s*[\d.-]{6,12}/i, '')
+            .trim();
+
+        if (matriculaLimpa || nomeLimpo) {
             composicao.push({
-                funcao: match[1].toUpperCase(),
-                nome: match[2].trim(),
-                matricula: match[3] ? match[3].trim() : ''
+                funcao: MAPA_FUNCOES[sigla] || 'Patrulheiro',
+                nome: nomeLimpo,
+                matricula: matriculaLimpa
             });
         }
     });
@@ -187,7 +226,7 @@ export function parseRelatorioSipom(texto) {
         historico,
         pessoas,
         procedimento,
-        materiais: [],
+        materiais,
         composicao
     };
 }

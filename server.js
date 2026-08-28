@@ -119,18 +119,28 @@ bot.on('callback_query:data', async (ctx) => {
             await preencherModalHistorico(page, dados.historico);
             await ctx.reply('✅ *Modal Histórico preenchido com sucesso!*', { parse_mode: 'Markdown' });
         } else if (opcao === 'opcao_5') {
-            await preencherModalMaterial(page, dados.materiais);
-            await ctx.reply('✅ *Modal Materiais preenchido com sucesso!*', { parse_mode: 'Markdown' });
+            if (!dados.materiais || dados.materiais.length === 0) {
+                await ctx.reply('⚠️ *Nenhum material extraído neste relatório.*', { parse_mode: 'Markdown' });
+            } else {
+                await preencherModalMaterial(page, dados.materiais);
+                await ctx.reply('✅ *Aba e Modal de Materiais preenchidos!*', { parse_mode: 'Markdown' });
+            }
         } else if (opcao === 'opcao_6') {
             await preencherModalComposicao(page, dados.composicao);
             await ctx.reply('✅ *Modal Composição preenchido com sucesso!*', { parse_mode: 'Markdown' });
+
         } else if (opcao === 'opcao_7') {
             await preencherAbaPessoas(page, dados);
             if (dados.procedimento) await preencherModalProcedimento(page, dados.procedimento);
             if (dados.historico) await preencherModalHistorico(page, dados.historico);
-            if (dados.materiais) await preencherModalMaterial(page, dados.materiais);
+
+            // Só executa se de fato houverem materiais extraídos no relatório
+            if (dados.materiais && dados.materiais.length > 0) {
+                await preencherModalMaterial(page, dados.materiais);
+            }
+
             if (dados.composicao) await preencherModalComposicao(page, dados.composicao);
-            await ctx.reply('🎉 *TODOS OS MODAIS FORAM PREENCHIDOS E GRAVADOS COM SUCESSO!*', { parse_mode: 'Markdown' });
+            await ctx.reply('🎉 *TODOS OS MODAIS EXISTENTES FORAM PREENCHIDOS COM SUCESSO!*', { parse_mode: 'Markdown' });
         }
 
         await ctx.reply('Deseja realizar mais alguma ação nesta mesma ocorrência?', {
