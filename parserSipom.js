@@ -260,75 +260,112 @@ export function parseRelatorioSipom(texto) {
         pessoas.push({ nome: acusadoNome, vinculo: 'Infrator', mae: acusadoMae || '' });
     }
 
-    // Extração Dinâmica do Procedimento (ex: "EDUARDO COUTINHO / 132-4587/2026")
+    // 1. EXTRAÇÃO DO PROCEDIMENTO: Isola os 3 primeiros dígitos da numeração como código da delegacia
     const procLinha = texto.match(/Delegado\/Delegacia\/Procedimento:\s*(.+)/i)?.[1] || '';
-    const procPartes = procLinha.split('/').map(s => s.trim());
+    let procedimento = null;
 
-    let delegado = procPartes[0] || '';
-    let delegacia = '';
-    let numeroProc = '';
-    let anoProc = new Date().getFullYear().toString();
+    if (procLinha && !/N[ÃA]O\s+INFORMADO|S\/A/i.test(procLinha)) {
+        const procPartes = procLinha.split('/').map(s => s.trim());
+        let delegado = procPartes[0] || '';
+        let codigoDelegacia = '';
+        let numeroProc = '';
+        let anoProc = new Date().getFullYear().toString();
 
-    const matchEstruturado = procLinha.match(/(\d{2,4})\s*-\s*(\d+)(?:\/(\d{4}))?/);
-    if (matchEstruturado) {
-        delegacia = matchEstruturado[1].trim();
-        numeroProc = matchEstruturado[2].trim();
-        if (matchEstruturado[3]) anoProc = matchEstruturado[3].trim();
-    } else {
-        if (procPartes[1]) delegacia = procPartes[1].replace(/\D/g, '');
-        if (procPartes[2]) numeroProc = procPartes[2].replace(/\D/g, '');
-        if (procPartes[3]) anoProc = procPartes[3].replace(/\D/g, '');
+        // Regex para capturar a estrutura "132-482/2026"
+        const matchNum = procLinha.match(/(\d{3,4})\s*-\s*(\d+)(?:\/(\d{4}))?/);
+
+        if (matchNum) {
+            codigoDelegacia = matchNum[1].trim(); // Pega exatamente os 3 primeiros dígitos (ex: 132)
+            numeroProc = matchNum[2].trim();      // Pega o número do B.O. (ex: 482)
+            if (matchNum[3]) anoProc = matchNum[3].trim();
+        }
+
+        // Identifica o Tipo de Procedimento
+        let tipoProc = 'Boletim de Ocorrência - BO';
+        const procUpper = procLinha.toUpperCase();
+        if (procUpper.includes('INQUERITO') || procUpper.includes(' IP ')) tipoProc = 'Inquérito Policial - IP';
+        else if (procUpper.includes('TERMO CIRCUNSTANCIADO') || procUpper.includes(' TCO ')) tipoProc = 'Termo Circunstanciado de Ocorrência - TCO';
+        else if (procUpper.includes('AI')) tipoProc = 'Ato Infracional';
+
+        procedimento = {
+            delegado: /N[ÃA]O\s+INFORMADO/i.test(delegado) ? '' : delegado,
+            delegacia: codigoDelegacia, // Envia estritamente o código "132"
+            numero: numeroProc,
+            ano: anoProc,
+            procedimento: tipoProc
+        };
     }
 
-    const procedimento = {
-        delegado,
-        delegacia,
-        numero: numeroProc,
-        ano: anoProc,
-        procedimento: 'Boletim de Ocorrência - BO'
-    };
-
-    // Extração Dinâmica de Materiais, Drogas e Veículos
+    // 2. EXTRAÇÃO DINÂMICA DE MATERIAIS, DROGAS, DINHEIRO E UTENSÍLIOS
     const materiais = [];
+    const textoSemSA = !/Material:\s*S\/A/i.test(texto);
 
-    const matchVeiculo = texto.match(/Ve[ií]culo:\s*([^\r\n]+)/i) || texto.match(/(?:ve[ií]culo|autom[oó]vel|motocicleta|moto)\s+([\w\s.-]+?),\s*cor\s+(\w+).*?placa\s*([\w\d]+)/i);
+    if (textoSemSA) {
+        // A. Veículos
+        const matchVeiculo = texto.match(/Ve[ií]culo:\s*([^\r\n]+)/i) || texto.match(/(?:ve[ií]culo|autom[oó]vel|motocicleta|moto)\s+([\w\s.-]+?),\s*cor\s+(\w+).*?placa\s*([\w\d]+)/i);
+        if (matchVeiculo) {
+            const linhaVeiculo = matchVeiculo[0] || matchVeiculo[1];
+            const matchPlaca = linhaVeiculo.match(/placa\s*([A-Z0-9]{7})/i) || linhaVeiculo.match(/([A-Z]{3}-?\d[A-Z0-9]\d{2})/i);
+            const placa = matchPlaca ? matchPlaca[1].replace('-', '').toUpperCase() : '';
+            const situacao = linhaVeiculo.toLowerCase().includes('recuperad') ? 'Recuperado' : 'Apreendido';
 
-    if (matchVeiculo) {
-        const linhaVeiculo = matchVeiculo[0] || matchVeiculo[1];
-        const matchPlaca = linhaVeiculo.match(/placa\s*([A-Z0-9]{7})/i) || linhaVeiculo.match(/([A-Z]{3}-?\d[A-Z0-9]\d{2})/i);
-        const placa = matchPlaca ? matchPlaca[1].replace('-', '').toUpperCase() : '';
-        const situacao = linhaVeiculo.toLowerCase().includes('recuperad') ? 'Recuperado' : 'Apreendido';
+            if (placa) {
+                materiais.push({
+                    tipo: 'Veículo',
+                    descricao: linhaVeiculo.trim(),
+                    placa: placa,
+                    situacao: situacao,
+                    situacaoValue: situacao === 'Recuperado' ? '2' : '1'
+                });
+            }
+        }
 
-        if (placa) {
+        // B. Entorpecentes (Captura flexível de gramas, trouxinhas e valores entre parênteses)
+        const tiposDrogas = [
+            { regex: /(?:Droga:)?\s*(skank|skunk)\s*(?:\([^)]*\))?[:\-=]?\s*\(?(\d+(?:[.,]\d+)?)\s*g\)?/i, tipo: 'Skank' },
+            { regex: /(?:Droga:)?\s*(maconha)\s*(?:\([^)]*\))?[:\-=]?\s*\(?(\d+(?:[.,]\d+)?)\s*g\)?/i, tipo: 'Maconha' },
+            { regex: /(?:Droga:)?\s*(haxixe)\s*(?:\([^)]*\))?[:\-=]?\s*\(?(\d+(?:[.,]\d+)?)\s*g\)?/i, tipo: 'Haxixe' },
+            { regex: /(?:Droga:)?\s*(coca[ií]na|coca)\s*(?:\([^)]*\))?[:\-=]?\s*\(?(\d+(?:[.,]\d+)?)\s*g\)?/i, tipo: 'Cocaína' },
+            { regex: /(?:Droga:)?\s*(crack)\s*(?:\([^)]*\))?[:\-=]?\s*\(?(\d+(?:[.,]\d+)?)\s*g\)?/i, tipo: 'Crack' },
+            { regex: /(?:Droga:)?\s*(ecstasy|mdma)\s*(?:\([^)]*\))?[:\-=]?\s*\(?(\d+(?:[.,]\d+)?)\s*g\)?/i, tipo: 'Ecstasy/MDMA' }
+        ];
+
+        // Busca todas as linhas sob o cabeçalho Material
+        const blocoMaterial = texto.split(/Material:/i)[1]?.split(/(?:Histórico|Qualificação|Composição):/i)[0] || '';
+
+        tiposDrogas.forEach(item => {
+            const matches = blocoMaterial.matchAll(new RegExp(item.regex, 'gi'));
+            for (const match of matches) {
+                if (match && match[2]) {
+                    materiais.push({
+                        tipo: 'Droga',
+                        nomeDroga: item.tipo,
+                        quantidade: match[2].replace(',', '.')
+                    });
+                }
+            }
+        });
+
+        // C. Dinheiro em Espécie (Ex: Dinheiro: R$ 435,50)
+        const matchDinheiro = blocoMaterial.match(/Dinheiro:\s*R\$\s*([\d.,]+)/i);
+        if (matchDinheiro) {
             materiais.push({
-                tipo: 'Veículo',
-                descricao: linhaVeiculo.trim(),
-                placa: placa,
-                situacao: situacao,
-                situacaoValue: situacao === 'Recuperado' ? '2' : '1'
+                tipo: 'Dinheiro',
+                valor: matchDinheiro[1].replace('.', '').replace(',', '.')
+            });
+        }
+
+        // D. Outros Objetos / Utensílios
+        const matchUtensilio = blocoMaterial.match(/Utens[ií]lio:\s*([^\r\n]+)/i);
+        if (matchUtensilio) {
+            materiais.push({
+                tipo: 'Outros',
+                descricao: matchUtensilio[1].trim()
             });
         }
     }
 
-    const regioesEntorpecentes = [
-        { regex: /(coca[ií]na|coca)\s*[:\-=]?\s*(\d+(?:[.,]\d+)?)/i, tipo: 'Cocaína' },
-        { regex: /(crack)\s*[:\-=]?\s*(\d+(?:[.,]\d+)?)/i, tipo: 'Crack' },
-        { regex: /(maconha|haxixe|skunk)\s*[:\-=]?\s*(\d+(?:[.,]\d+)?)/i, tipo: 'Maconha' },
-        { regex: /(ecstasy|mdma)\s*[:\-=]?\s*(\d+(?:[.,]\d+)?)/i, tipo: 'Ecstasy/MDMA' }
-    ];
-
-    regioesEntorpecentes.forEach(item => {
-        const match = texto.match(item.regex);
-        if (match) {
-            materiais.push({
-                tipo: 'Droga',
-                nomeDroga: item.tipo,
-                quantidade: match[2].replace(',', '.')
-            });
-        }
-    });
-
-    // Extração Completa da Composição (preserva hífens e sufixos alfanuméricos como "-X")
+    // 3. EXTRAÇÃO COMPLETA DA COMPOSIÇÃO (Ignora "Não informado")
     const MAPA_FUNCOES = {
         'CMT': 'Comandante',
         'MOT': 'Motorista',
@@ -339,27 +376,30 @@ export function parseRelatorioSipom(texto) {
     const linhasComp = texto.match(/(CMT|MOT|PAT)[\s:]+[^\r\n]+/gi) || [];
 
     linhasComp.forEach(linha => {
+        // Descarta a linha se a matrícula for declarada como Não Informada
+        if (/M\.F\.?\s*:\s*N[ãa]o\s+informado/i.test(linha)) return;
+
         const siglaMatch = linha.match(/(CMT|MOT|PAT)/i);
         if (!siglaMatch) return;
 
         const sigla = siglaMatch[1].toUpperCase();
 
-        // Preserva sufixos alfanuméricos e hífens da matrícula
-        const matchMatricula = linha.match(/(?:M\.F\.?|Matr[ií]cula)\s*[:\-=]?\s*([\d.\-A-Za-z]+)/i) || linha.match(/\b([\d.\-A-Za-z]{6,15})\b/);
-        let matriculaLimpa = matchMatricula ? matchMatricula[1].trim().toUpperCase() : '';
-        matriculaLimpa = matriculaLimpa.replace(/\./g, '');
+        // Extrai a Matrícula mantendo hífens e dígitos verificadores alfanuméricos (ex: 309010-7-X)
+        const matchMatricula = linha.match(/(?:M\.F\.?|Matr[ií]cula)\s*[:\-=]?\s*([\d.\-A-Za-z]+)/i);
+        let matriculaLimpa = matchMatricula ? matchMatricula[1].replace(/\./g, '').trim().toUpperCase() : '';
+
+        // Se o resultado limpo for "NÃO INFORMADO" ou vazio, ignora o cadastro do policial
+        if (!matriculaLimpa || /INFORMADO/i.test(matriculaLimpa)) return;
 
         const nomeLimpo = linha.replace(/(CMT|MOT|PAT)[\s:]+/i, '')
-            .replace(/(?:M\.F\.?|Matr[ií]cula)\s*[:\-=]?\s*[\d.\-A-Za-z]+/i, '')
+            .replace(/(?:M\.F\.?|Matr[ií]cula)\s*[:\-=]?\s*[^\r\n]+/i, '')
             .trim();
 
-        if (matriculaLimpa || nomeLimpo) {
-            composicao.push({
-                funcao: MAPA_FUNCOES[sigla] || 'Patrulheiro',
-                nome: nomeLimpo,
-                matricula: matriculaLimpa
-            });
-        }
+        composicao.push({
+            funcao: MAPA_FUNCOES[sigla] || 'Patrulheiro',
+            nome: nomeLimpo,
+            matricula: matriculaLimpa
+        });
     });
 
     return {

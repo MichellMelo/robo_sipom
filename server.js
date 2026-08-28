@@ -32,12 +32,12 @@ const sessoesUsuarios = new Map();
 function criarMenuOpcoes() {
     return new InlineKeyboard()
         .text('1. Criar Ocorrência Completa', 'opcao_1').row()
-        .text('2. Preencher Apenas Pessoas', 'opcao_2')
-        .text('3. Preencher Apenas Procedimento', 'opcao_3').row()
-        .text('4. Preencher Apenas Histórico', 'opcao_4')
-        .text('5. Preencher Apenas Materiais', 'opcao_5').row()
-        .text('6. Preencher Apenas Composições', 'opcao_6').row()
-        .text('🚀 7. FAZER TUDO AGORA (Modais)', 'opcao_7');
+        .text('2. Apenas Pessoas', 'opcao_2')
+        .text('3. Apenas Procedimento', 'opcao_3').row()
+        .text('4. Apenas Histórico', 'opcao_4')
+        .text('5. Apenas Materiais', 'opcao_5').row()
+        .text('6. Apenas Composições', 'opcao_6').row()
+        .text('🚀 7. FAZER TUDO (Modais)', 'opcao_7');
 }
 
 bot.catch((err) => {

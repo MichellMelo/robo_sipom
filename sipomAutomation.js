@@ -216,196 +216,214 @@ export async function preencherAbaPessoas(page, dados) {
 }
 
 /**
- * ABA 2: MODAL DE PROCEDIMENTOS (#modalProcedimento)
+ * ABA PROCEDIMENTOS: Preenchimento da Repartição, Delegacia e Dados do Procedimento
  */
 export async function preencherModalProcedimento(page, procedimento) {
     if (!procedimento) return;
 
     try {
         console.log('\n[+] Acessando Aba: Procedimentos...');
-        const abaProcedimentos = page.locator('#procedimentos-tab, a:has-text("Procedimentos")').first();
-        await abaProcedimentos.click().catch(() => { });
-        await page.waitForTimeout(1000);
+        const abaProc = page.locator('#procedimentos-tab, a:has-text("Procedimento")').first();
+        if (await abaProc.isVisible({ timeout: 5000 })) {
+            await abaProc.click({ force: true });
+            await page.waitForTimeout(800);
+        }
 
         console.log('[+] Abrindo Modal de Procedimento...');
-        await page.evaluate(() => {
-            if (typeof $ !== 'undefined' && $('#modalProcedimento').length) {
-                $('#modalProcedimento').modal('show');
-            } else {
-                const btn = document.querySelector('button[data-target="#modalProcedimento"]');
-                if (btn) btn.click();
-            }
-        });
+        const btnAbrir = page.locator('button[data-target="#modalProcedimento"], #btnProcedimentoModal, #procedimentos button:has-text("Procedimento")').first();
+        await btnAbrir.waitFor({ state: 'visible', timeout: 5000 });
+        await btnAbrir.click({ force: true });
 
-        const modalProcedimento = page.locator('#modalProcedimento');
-        await modalProcedimento.waitFor({ state: 'visible', timeout: 10000 });
+        const modal = page.locator('#modalProcedimento, div.modal.show').first();
+        await modal.waitFor({ state: 'visible', timeout: 8000 });
         await page.waitForTimeout(600);
 
-        // 1. Tipo de Procedimento
-        const tipoDesejado = procedimento.procedimento || procedimento.tipo || 'Boletim de Ocorrência - BO';
-        console.log(`[+] Selecionando Tipo de Procedimento: "${tipoDesejado}"...`);
+        // 1. Tipo de Procedimento (Ex: "Inquérito Policial - IP")
+        if (procedimento.procedimento) {
+            console.log(`[+] Selecionando Tipo de Procedimento: "${procedimento.procedimento}"...`);
+            await page.evaluate(({ tipoProc }) => {
+                const select = document.querySelector('#modalProcedimento select[name*="procedimento"], #modalProcedimento select[name*="tipo"]');
+                if (select) {
+                    const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
+                    const alvo = norm(tipoProc);
 
-        await page.evaluate(({ textoAlvo }) => {
-            const select = document.querySelector('#modalProcedimento select[name="procedimento"]');
-            if (!select) return;
+                    const opt = Array.from(select.options).find(o => {
+                        const txt = norm(o.textContent);
+                        return txt.includes(alvo) || alvo.includes(txt) || (alvo.includes('inquerito') && txt.includes('inquerito'));
+                    });
 
-            const normalizar = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
-            const alvo = normalizar(textoAlvo);
+                    if (opt) {
+                        select.value = opt.value;
+                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                }
+            }, { tipoProc: procedimento.procedimento });
+        }
 
-            const opcaoEncontrada = Array.from(select.options).find(opt => {
-                const textoOpt = normalizar(opt.textContent);
-                return textoOpt === alvo || textoOpt.includes(alvo) || alvo.includes(textoOpt);
+        await page.waitForTimeout(400);
+
+        // 2. Repartição de Registro * (Seleciona "Polícia Civil" por padrão ou conforme o relatório)
+        console.log('[+] Selecionando Repartição de registro: "Polícia Civil"...');
+        await page.evaluate(() => {
+            const selectReparticao = Array.from(document.querySelectorAll('#modalProcedimento select')).find(s => {
+                const label = s.previousElementSibling || s.parentElement.querySelector('label');
+                return (label && label.textContent.includes('Repartição')) || s.name.includes('reparticao') || s.name.includes('orgao');
             });
 
-            if (opcaoEncontrada) {
-                select.value = opcaoEncontrada.value;
-                select.dispatchEvent(new Event('change', { bubbles: true }));
-                select.dispatchEvent(new Event('input', { bubbles: true }));
-                if (typeof $ !== 'undefined') $(select).trigger('change');
-            }
-        }, { textoAlvo: tipoDesejado });
+            if (selectReparticao) {
+                const optPC = Array.from(selectReparticao.options).find(o => {
+                    const txt = o.textContent.toUpperCase();
+                    return txt.includes('POLÍCIA CIVIL') || txt.includes('POLICIA CIVIL') || txt.includes('PC');
+                });
 
-        await page.waitForTimeout(600);
-
-        // 2. Repartição (Polícia Civil = 2)
-        console.log('[+] Selecionando Repartição: Polícia Civil...');
-        await page.evaluate(() => {
-            const select = document.querySelector('#modalProcedimento select[name="reparticao"], #modalProcedimento select#reparticao');
-            if (select) {
-                select.value = '2';
-                select.dispatchEvent(new Event('change', { bubbles: true }));
-                select.dispatchEvent(new Event('input', { bubbles: true }));
-                if (typeof $ !== 'undefined') $(select).trigger('change');
+                if (optPC) {
+                    selectReparticao.value = optPC.value;
+                    selectReparticao.dispatchEvent(new Event('change', { bubbles: true }));
+                    if (typeof $ !== 'undefined') $(selectReparticao).trigger('change');
+                } else if (selectReparticao.options.length > 1) {
+                    selectReparticao.selectedIndex = 1; // Seleciona a primeira opção válida
+                    selectReparticao.dispatchEvent(new Event('change', { bubbles: true }));
+                    if (typeof $ !== 'undefined') $(selectReparticao).trigger('change');
+                }
             }
         });
 
-        await page.waitForTimeout(800);
+        await page.waitForTimeout(600); // Aguarda o SIPOM carregar as delegacias ligadas à Polícia Civil
 
-        // 3. Delegacia (Select2 por Código exato)
-        const codigoDelegacia = String(procedimento.delegacia || '').replace(/\D/g, '');
-        if (codigoDelegacia) {
-            console.log(`[+] Buscando Delegacia pelo código exato: "${codigoDelegacia}"...`);
-            try {
-                const containerDelegacia = page.locator('[id^="select2-procedimento_delegacia"]').first();
-                await containerDelegacia.click({ force: true });
-                await page.waitForTimeout(400);
+        // 3. Delegacia (Busca ESTRITA pelos 3 dígitos ex: "132")
+        if (procedimento.delegacia) {
+            console.log(`[+] Buscando Delegacia pelo código exato de 3 dígitos: "${procedimento.delegacia}"...`);
 
-                const searchInput = page.locator('.select2-container--open input.select2-search__field').first();
-                if (await searchInput.isVisible({ timeout: 2000 })) {
-                    await searchInput.focus();
-                    await searchInput.fill('');
-                    await searchInput.pressSequentially(codigoDelegacia, { delay: 100 });
-                    await page.waitForTimeout(800);
+            await page.evaluate(({ codDel }) => {
+                const selectDel = Array.from(document.querySelectorAll('#modalProcedimento select')).find(s => {
+                    const label = s.previousElementSibling || s.parentElement.querySelector('label');
+                    return (label && label.textContent.includes('Delegacia')) || s.name.includes('delegacia');
+                });
 
-                    const opcaoExata = page.locator(`.select2-results__option:has-text("${codigoDelegacia}-"), .select2-results__option--highlighted`).first();
-                    if (await opcaoExata.isVisible({ timeout: 2000 })) {
-                        await opcaoExata.click();
-                    } else {
-                        await page.keyboard.press('Enter');
+                if (selectDel) {
+                    const codigoAlvo = String(codDel).trim();
+
+                    const opt = Array.from(selectDel.options).find(o => {
+                        const val = o.value ? String(o.value).trim() : '';
+                        const txt = o.textContent ? String(o.textContent).trim() : '';
+
+                        if (val === codigoAlvo) return true;
+
+                        const comecoExatoRegex = new RegExp(`^${codigoAlvo}\\s*[-–—\\s]`, 'i');
+                        return comecoExatoRegex.test(txt);
+                    });
+
+                    if (opt) {
+                        selectDel.value = opt.value;
+                        selectDel.dispatchEvent(new Event('change', { bubbles: true }));
+                        if (typeof $ !== 'undefined') $(selectDel).trigger('change');
                     }
                 }
-            } catch (e) {
-                console.warn('⚠️ Erro ao selecionar Delegacia via Select2:', e.message);
-            }
+            }, { codDel: procedimento.delegacia });
         }
 
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(400);
 
-        // 4. Delegado (Select2)
-        if (procedimento.delegado) {
-            console.log(`[+] Buscando Delegado: "${procedimento.delegado}"...`);
-            try {
-                const containerDelegado = page.locator('[id^="select2-procedimento_delegado"]').first();
-                await containerDelegado.click({ force: true });
-                await page.waitForTimeout(400);
+        // 4. Delegado (Busca inteligente por partes do nome / tokens)
+        const nomeDelegadoAlvo = procedimento.delegado;
+        if (nomeDelegadoAlvo && !/N[ÃA]O\s+INFORMADO/i.test(nomeDelegadoAlvo)) {
+            console.log(`[+] Buscando Delegado(a) no combo: "${nomeDelegadoAlvo}"...`);
 
-                const searchInputDelegado = page.locator('.select2-container--open input.select2-search__field').first();
-                if (await searchInputDelegado.isVisible({ timeout: 2000 })) {
-                    await searchInputDelegado.fill(procedimento.delegado);
-                    await page.waitForTimeout(800);
+            // Aguarda 800ms para garantir que a requisição AJAX das delegacias/delegados foi concluída
+            await page.waitForTimeout(800);
 
-                    const opcaoDelegado = page.locator('.select2-results__option--highlighted, .select2-results__option').first();
-                    if (await opcaoDelegado.isVisible({ timeout: 2000 })) {
-                        await opcaoDelegado.click();
-                    } else {
-                        await page.keyboard.press('Enter');
+            await page.evaluate(({ nomeDel }) => {
+                const selectDel = Array.from(document.querySelectorAll('#modalProcedimento select')).find(s => {
+                    const label = s.previousElementSibling || s.parentElement.querySelector('label');
+                    return (label && label.textContent.includes('Delegado')) || s.name.includes('delegado');
+                });
+
+                if (selectDel) {
+                    const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase() : '';
+                    const nomeUpper = norm(nomeDel);
+
+                    // Separa os nomes (ex: ["EDONALDO", "PEREIRA", "GOMES"]) ignorando preposições pequenas
+                    const partesNome = nomeUpper.split(/\s+/).filter(p => p.length > 2);
+
+                    const opcoes = Array.from(selectDel.options);
+
+                    // A. Tentativa 1: Correspondência total do nome
+                    let optEncontrada = opcoes.find(o => norm(o.textContent).includes(nomeUpper));
+
+                    // B. Tentativa 2: Procura por combinação do Primeiro + Último Nome (ex: "EDONALDO" e "GOMES")
+                    if (!optEncontrada && partesNome.length >= 2) {
+                        const primeiroNome = partesNome[0];
+                        const ultimoNome = partesNome[partesNome.length - 1];
+
+                        optEncontrada = opcoes.find(o => {
+                            const txt = norm(o.textContent);
+                            return txt.includes(primeiroNome) && txt.includes(ultimoNome);
+                        });
+                    }
+
+                    // C. Tentativa 3: Qualquer opção que contenha o primeiro nome
+                    if (!optEncontrada && partesNome.length > 0) {
+                        optEncontrada = opcoes.find(o => norm(o.textContent).includes(partesNome[0]));
+                    }
+
+                    // Aplica a seleção no DOM
+                    if (optEncontrada) {
+                        selectDel.value = optEncontrada.value;
+                        selectDel.dispatchEvent(new Event('change', { bubbles: true }));
+                        if (typeof $ !== 'undefined') $(selectDel).trigger('change');
+                    } else if (selectDel.options.length > 1) {
+                        // Fallback de segurança apenas se o nome não existir de forma alguma na lista
+                        selectDel.selectedIndex = 1;
+                        selectDel.dispatchEvent(new Event('change', { bubbles: true }));
+                        if (typeof $ !== 'undefined') $(selectDel).trigger('change');
                     }
                 }
-            } catch (e) {
-                console.warn('⚠️ Erro ao selecionar Delegado:', e.message);
-            }
-        }
-
-        // 5. Número do B.O. (procedimento_numero)
-        const numeroBO = procedimento.numero || '';
-        if (numeroBO) {
-            console.log(`[+] Preenchendo Número do B.O.: ${numeroBO}...`);
-            const inputNumero = page.locator('#modalProcedimento input[name="procedimento_numero"]').first();
-            await inputNumero.waitFor({ state: 'visible', timeout: 3000 });
-            await inputNumero.focus();
-            await inputNumero.click();
-            await inputNumero.fill('');
-            await inputNumero.pressSequentially(String(numeroBO), { delay: 50 });
-
-            await page.evaluate(({ val }) => {
-                const input = document.querySelector('#modalProcedimento input[name="procedimento_numero"]');
-                if (input) {
-                    input.value = val;
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                    input.dispatchEvent(new Event('blur', { bubbles: true }));
-                }
-            }, { val: String(numeroBO) });
-        }
-
-        // 6. Ano do B.O. (procedimento_ano)
-        const anoBO = procedimento.ano || new Date().getFullYear().toString();
-        if (anoBO) {
-            console.log(`[+] Preenchendo Ano: ${anoBO}...`);
-            const inputAno = page.locator('#modalProcedimento input[name="procedimento_ano"]').first();
-            if (await inputAno.isVisible({ timeout: 2000 })) {
-                await inputAno.focus();
-                await inputAno.click();
-                await inputAno.fill('');
-                await inputAno.pressSequentially(String(anoBO), { delay: 50 });
-
-                await page.evaluate(({ val }) => {
-                    const input = document.querySelector('#modalProcedimento input[name="procedimento_ano"]');
-                    if (input) {
-                        input.value = val;
-                        input.dispatchEvent(new Event('input', { bubbles: true }));
-                        input.dispatchEvent(new Event('change', { bubbles: true }));
-                        input.dispatchEvent(new Event('blur', { bubbles: true }));
-                    }
-                }, { val: String(anoBO) });
-            }
-        }
-
-        await page.waitForTimeout(600);
-
-        // 7. Confirmar e Salvar (JS sem :has-text)
-        console.log('[+] Confirmando gravação do Procedimento...');
-        await page.evaluate(() => {
-            const botoes = Array.from(document.querySelectorAll('#modalProcedimento button, #modalProcedimento input[type="submit"]'));
-            const btnSalvar = botoes.find(b => b.classList.contains('btn-success') ||
-                b.textContent.trim().toLowerCase().includes('atualizar') ||
-                b.textContent.trim().toLowerCase().includes('salvar')) ||
-                document.querySelector('#btn-salvar-procedimento');
-            if (btnSalvar) btnSalvar.click();
-        });
-
-        await modalProcedimento.waitFor({ state: 'hidden', timeout: 10000 }).catch(async () => {
+            }, { nomeDel: nomeDelegadoAlvo });
+        } else {
+            // Seleciona a primeira opção disponível caso não haja delegado no relatório
             await page.evaluate(() => {
-                if (typeof $ !== 'undefined') $('#modalProcedimento').modal('hide');
+                const selectDel = Array.from(document.querySelectorAll('#modalProcedimento select')).find(s => {
+                    const label = s.previousElementSibling || s.parentElement.querySelector('label');
+                    return (label && label.textContent.includes('Delegado')) || s.name.includes('delegado');
+                });
+                if (selectDel && selectDel.options.length > 1) {
+                    selectDel.selectedIndex = 1;
+                    selectDel.dispatchEvent(new Event('change', { bubbles: true }));
+                }
             });
-        });
+        }
 
+        // 5. Número do Procedimento
+        if (procedimento.numero) {
+            console.log(`[+] Preenchendo Número: "${procedimento.numero}"...`);
+            const inputNum = page.locator('#modalProcedimento input[name*="numero"]').first();
+            if (await inputNum.isVisible({ timeout: 2000 })) {
+                await inputNum.fill(procedimento.numero);
+            }
+        }
+
+        // 6. Ano do Procedimento
+        if (procedimento.ano) {
+            const inputAno = page.locator('#modalProcedimento input[name*="ano"]').first();
+            if (await inputAno.isVisible({ timeout: 2000 })) {
+                await inputAno.fill(procedimento.ano);
+            }
+        }
+
+        await page.waitForTimeout(600);
+
+        // 7. Botão Salvar
+        console.log('[+] Gravando Procedimento...');
+        const btnSalvar = page.locator('#modalProcedimento button.btn-success, #modalProcedimento button:has-text("Salvar"), #btn-salvar-procedimento, #modalProcedimento input[type="submit"]').first();
+        await btnSalvar.click({ force: true });
+
+        await modal.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => { });
         await page.waitForTimeout(1000);
+
         console.log('✅ Procedimento gravado com sucesso!');
 
-    } catch (error) {
-        console.warn('⚠️ Falha ao preencher Procedimento:', error.message);
-        await page.keyboard.press('Escape').catch(() => { });
+    } catch (e) {
+        console.warn('⚠️ Falha ao preencher Procedimento:', e.message);
     }
 }
 
@@ -753,8 +771,8 @@ export async function preencherModalComposicao(page, composicao) {
                     }
                 }, { val: matriculaFormatada });
 
-                // Aguarda 2s para o SIPOM consultar no banco de dados e preencher o Nome automaticamente
-                await page.waitForTimeout(2000);
+                // Aguarda 1.5s para o SIPOM consultar no banco de dados e preencher o Nome automaticamente
+                await page.waitForTimeout(1500);
             }
 
             // 6. Clique de confirmação/salvamento (Salvar / Atualizar)
