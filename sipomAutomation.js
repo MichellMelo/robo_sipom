@@ -146,7 +146,7 @@ export async function preencherAbaPessoas(page, dados) {
     try {
         console.log('\n[+] Acessando Aba: Pessoas...');
 
-        // 1. Clica obrigatoriamente na aba de Pessoas (#pessoas-tab)
+        // 1. Clica na aba de Pessoas (#pessoas-tab)
         const abaPessoas = page.locator('#pessoas-tab, a:has-text("Pessoas")').first();
         await abaPessoas.waitFor({ state: 'visible', timeout: 5000 });
         await abaPessoas.click({ force: true });
@@ -155,15 +155,15 @@ export async function preencherAbaPessoas(page, dados) {
         for (const pessoa of listaPessoas) {
             console.log(`[+] Adicionando Pessoa: [${pessoa.vinculo || 'Vítima'}] ${pessoa.nome}...`);
 
-            // 2. Clica no botão "+ Pessoa" visível no painel ativo
+            // 2. Clica no botão "+ Pessoa"
             const btnAbrirModal = page.locator('#pessoas button:has-text("Pessoa"), button[data-target="#modalPessoa"], .btn-success:has-text("Pessoa")').first();
             await btnAbrirModal.waitFor({ state: 'visible', timeout: 5000 });
             await btnAbrirModal.click({ force: true });
 
-            // 3. Aguarda o Modal de Pessoa ficar aberto na tela
+            // 3. Aguarda o Modal de Pessoa abrir
             const modalPessoa = page.locator('#modalPessoa, div.modal.show').first();
             await modalPessoa.waitFor({ state: 'visible', timeout: 8000 });
-            await page.waitForTimeout(600);
+            await page.waitForTimeout(400);
 
             // 4. Seleção de Vínculo (Pessoas Envolvidas)
             const vinculoAlvo = pessoa.vinculo || 'Vítima';
@@ -184,23 +184,64 @@ export async function preencherAbaPessoas(page, dados) {
             if (pessoa.nome) {
                 const inputNome = page.locator('#modalPessoa input[placeholder*="NOME"], #modalPessoa input[name*="nome"], .modal.show input[placeholder*="NOME"]').first();
                 if (await inputNome.isVisible({ timeout: 2000 })) {
+                    await inputNome.focus();
                     await inputNome.fill('');
-                    await inputNome.pressSequentially(pessoa.nome.toUpperCase(), { delay: 40 });
+                    await inputNome.fill(pessoa.nome.toUpperCase());
+                    // Dispara a saída de foco para registrar o nome no formulário
+                    await inputNome.evaluate(el => el.dispatchEvent(new Event('blur', { bubbles: true })));
                 }
             }
 
-            // 6. Preenchimento de Mãe
+            // 6. TRATAMENTO DO MODAL SECUNDÁRIO ("Pessoas encontradas")
+            // Executado APÓS o preenchimento do nome para interceptar o pop-up do BD
+            await page.waitForTimeout(800);
+
+            await page.evaluate(() => {
+                const modalBD = document.querySelector('#modalPessoasEncontradasOcorrencia');
+                if (modalBD) {
+                    modalBD.style.display = 'none';
+                    modalBD.classList.remove('show');
+                    modalBD.setAttribute('aria-hidden', 'true');
+
+                    const backdrops = document.querySelectorAll('.modal-backdrop');
+                    backdrops.forEach(b => b.remove());
+
+                    document.body.classList.remove('modal-open');
+                    document.body.style.overflow = 'auto';
+                }
+            });
+
+            await page.waitForTimeout(400);
+
+            // 7. Preenchimento do Nome da Mãe (Injeção Direta + Força Eventos do DOM)
             if (pessoa.mae) {
-                const inputMae = page.locator('#modalPessoa input[placeholder*="MÃE"], #modalPessoa input[name*="mae"], .modal.show input[placeholder*="MÃE"]').first();
-                if (await inputMae.isVisible({ timeout: 2000 })) {
-                    await inputMae.fill('');
-                    await inputMae.pressSequentially(pessoa.mae.toUpperCase(), { delay: 40 });
+                const nomeMaeCompleto = pessoa.mae.toUpperCase().trim();
+                console.log(`[+] Preenchendo Nome da Mãe Completo: "${nomeMaeCompleto}"...`);
+
+                // Injeta diretamente no atributo .value do elemento para impedir que o autocomplete do BD o sobrescreva
+                await page.evaluate(({ valorMae }) => {
+                    const inputMae = document.querySelector('#modalPessoa input[placeholder*="MÃE"]') ||
+                        document.querySelector('#modalPessoa input[name*="mae"]');
+
+                    if (inputMae) {
+                        inputMae.value = valorMae;
+                        inputMae.dispatchEvent(new Event('input', { bubbles: true }));
+                        inputMae.dispatchEvent(new Event('change', { bubbles: true }));
+                        inputMae.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+                }, { valorMae: nomeMaeCompleto });
+
+                // Reforço de segurança via Playwright
+                const inputMaeLocator = page.locator('#modalPessoa input[placeholder*="MÃE"], #modalPessoa input[name*="mae"], .modal.show input[placeholder*="MÃE"]').first();
+                if (await inputMaeLocator.isVisible({ timeout: 2000 })) {
+                    await inputMaeLocator.focus();
+                    await inputMaeLocator.fill(nomeMaeCompleto);
                 }
             }
 
             await page.waitForTimeout(500);
 
-            // 7. Salva a Pessoa
+            // 8. Salva a Pessoa
             const btnSalvar = page.locator('#modalPessoa button.btn-success, #modalPessoa button:has-text("Adicionar")').first();
             await btnSalvar.click({ force: true });
 
