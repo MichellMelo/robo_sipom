@@ -38,9 +38,6 @@ export const MAPA_BAIRROS_OPM = {
     'PQ SANTANA': '2ªCIA/21ºBPM',
 };
 
-/**
- * Tabela De-Para com opções do SIPOM e equivalências
- */
 export const MAPA_NATUREZAS_SIPOM = {
     // --- EQUIVALÊNCIAS / EXPRESSÕES DE RUA COMUNS ---
     'ABANDONO DE MATERIAL ILICITO': 'OUTRAS INFRAÇÕES À LEI DE ENTORPECENTES',
@@ -200,20 +197,18 @@ export const MAPA_NATUREZAS_SIPOM = {
     'ROUBO DE DISPPOSITIVO DE TELEFONIA MÓVEL': 'ROUBO DE DISPPOSITIVO DE TELEFONIA MÓVEL'
 };
 
-/**
- * Função principal de parsing para extrair dados do relatório textual
- */
+
 export function parseRelatorioSipom(texto) {
     if (typeof texto === 'object') return texto;
 
-    const fichaCiops = texto.match(/Ficha da CIOPS:\s*(\w+)/i)?.[1] || '';
-    const naturezaBruta = texto.match(/Natureza da Ocorrência:\s*(.+)/i)?.[1]?.trim() || '';
+    const fichaCiops = texto.match(/Ficha (?:da )?CIOPS:\s*(\w+)/i)?.[1] || '';
+    const naturezaBruta = texto.match(/Natureza (?:da Ocorrência)?:\s*(.+)/i)?.[1]?.trim() || '';
     const data = texto.match(/Data:\s*([\d\/]+)/i)?.[1] || '';
     const horaInicial = texto.match(/Inicial:\s*([\d\w:]+)/i)?.[1] || '00:00';
     const enderecoBruto = texto.match(/Endereço:\s*(.+)/i)?.[1] || '';
-    const viaturaMatch = texto.match(/Vtr\s*([\d]+)/i)?.[1] || '';
+    const viaturaMatch = texto.match(/Vtr\s*([\d\w]+)/i)?.[1] || '';
 
-    // Formatação de Data/Hora para HTML5 datetime-local (YYYY-MM-DDTHH:mm)
+    // Formatação de Data/Hora (YYYY-MM-DDTHH:mm)
     let dataHoraFormatada = '';
     if (data) {
         const partesData = data.split('/');
@@ -228,120 +223,129 @@ export function parseRelatorioSipom(texto) {
         }
     }
 
-    // Tratamento do endereço
+    // Tratamento de Endereço
     const partesEnd = enderecoBruto.split(',').map(s => s.trim());
     const rua = partesEnd[0] || '';
     const numero = partesEnd[1] || 'S/N';
     const bairro = (partesEnd[2] || '').toUpperCase();
     const cidade = partesEnd[3] || 'Fortaleza';
 
-    // Resolução dos mapeamentos
-    const opmLocal = MAPA_BAIRROS_OPM[bairro] || '2ªCIA/21ºBPM';
-    const naturezaSipom = MAPA_NATUREZAS_SIPOM[naturezaBruta.toUpperCase()] || naturezaBruta;
+    const opmLocal = typeof MAPA_BAIRROS_OPM !== 'undefined' && MAPA_BAIRROS_OPM[bairro] ? MAPA_BAIRROS_OPM[bairro] : '2ªCIA/21ºBPM';
+    const naturezaSipom = typeof MAPA_NATUREZAS_SIPOM !== 'undefined' && MAPA_NATUREZAS_SIPOM[naturezaBruta.toUpperCase()] ? MAPA_NATUREZAS_SIPOM[naturezaBruta.toUpperCase()] : naturezaBruta;
 
-    // Extração exata e limpa do Histórico
+    // Extração do Histórico
     const historicoMatch = texto.split(/Histórico:/i);
     let historico = '';
     if (historicoMatch.length > 1) {
-        historico = historicoMatch[1].split(/(?:Vítima|Acusado|Delegado\/Delegacia|CMT|MOT|PAT|Material|Apreensão):/i)[0].trim();
+        historico = historicoMatch[1].trim();
     }
 
-    // Extração de Pessoas
+    // =========================================================
+    // 🔍 CORREÇÃO DEFINITIVA: EXTRAÇÃO MÚLTIPLA DE PESSOAS
+    // =========================================================
     const pessoas = [];
-    const vitimaNome = texto.match(/Vítima:\s*(.+)/i)?.[1]?.trim();
-    const vitimaMae = texto.match(/Vítima:[\s\S]*?Mãe:\s*(.+)/i)?.[1]?.trim();
-    if (vitimaNome) {
-        pessoas.push({ nome: vitimaNome, vinculo: 'Vítima', mae: vitimaMae || '' });
+
+    // Isola o bloco compreendido entre "Qualificação das Partes:" e as seções seguintes
+    const blocoPessoasMatch = texto.match(/(?:Qualificação das Partes|Pessoas|Conduzidos?|Acusados?|Infratores?):([\s\S]*?)(?=(?:Delegado\/Delegacia|Material|Histórico|Composição):|$)/i);
+    const textoAnalisePessoas = blocoPessoasMatch ? blocoPessoasMatch[1] : texto;
+
+    // Subdivide pelas ocorrências individuais de envolvidos
+    const blocosIndividuais = textoAnalisePessoas.split(/(?=(?:Infrator|Acusado|Conduzido|Vítima|Vitima|Suspeito):)/i);
+
+    for (const bloco of blocosIndividuais) {
+        const matchNome = bloco.match(/(Infrator|Acusado|Conduzido|Vítima|Vitima|Suspeito):\s*([^\r\n]+)/i);
+        if (!matchNome) continue;
+
+        const papel = matchNome[1].trim();
+        const nomePessoa = matchNome[2].trim();
+
+        if (!nomePessoa || /não informado/i.test(nomePessoa)) continue;
+
+        // Extrai Mãe e Nascimento restritos ao bloco deste envolvido
+        const matchMae = bloco.match(/(?:Mãe|Mae|Genitora):\s*([^\r\n]+)/i);
+        const matchNasc = bloco.match(/(?:Nascimento|Data de Nascimento):\s*([^\r\n]+)/i);
+
+        const maePessoa = matchMae && !/não informad/i.test(matchMae[1]) ? matchMae[1].trim() : '';
+        const nascPessoa = matchNasc && !/não informad/i.test(matchNasc[1]) ? matchNasc[1].trim() : '';
+
+        let vinculo = 'Vítima';
+        if (/Infrator/i.test(papel)) vinculo = 'Infrator';
+        else if (/Acusado|Conduzido|Suspeito/i.test(papel)) vinculo = 'Acusado';
+        else if (/Vítima|Vitima/i.test(papel)) vinculo = 'Vítima';
+
+        pessoas.push({
+            nome: nomePessoa,
+            vinculo: vinculo,
+            mae: maePessoa,
+            dataNascimento: nascPessoa
+        });
     }
 
-    const acusadoNome = texto.match(/Acusado:\s*(.+)/i)?.[1]?.trim();
-    const acusadoMae = texto.match(/Acusado:[\s\S]*?Mãe:\s*(.+)/i)?.[1]?.trim();
-    if (acusadoNome) {
-        pessoas.push({ nome: acusadoNome, vinculo: 'Infrator', mae: acusadoMae || '' });
-    }
+    console.log('[DEBUG PARSER] Pessoas capturadas:', JSON.stringify(pessoas, null, 2));
 
-    // 1. EXTRAÇÃO DO PROCEDIMENTO: Isola os 3 primeiros dígitos da numeração como código da delegacia
+    // Extração do Procedimento
     const procLinha = texto.match(/Delegado\/Delegacia\/Procedimento:\s*(.+)/i)?.[1] || '';
     let procedimento = null;
 
     if (procLinha && !/N[ÃA]O\s+INFORMADO|S\/A/i.test(procLinha)) {
-        const procPartes = procLinha.split('/').map(s => s.trim());
-        let delegado = procPartes[0] || '';
-        let codigoDelegacia = '';
-        let numeroProc = '';
-        let anoProc = new Date().getFullYear().toString();
-
-        // Regex para capturar a estrutura "132-482/2026"
         const matchNum = procLinha.match(/(\d{3,4})\s*-\s*(\d+)(?:\/(\d{4}))?/);
+        let codigoDelegacia = matchNum ? matchNum[1].trim() : '';
+        let numeroProc = matchNum ? matchNum[2].trim() : '';
+        let anoProc = matchNum && matchNum[3] ? matchNum[3].trim() : new Date().getFullYear().toString();
 
-        if (matchNum) {
-            codigoDelegacia = matchNum[1].trim(); // Pega exatamente os 3 primeiros dígitos (ex: 132)
-            numeroProc = matchNum[2].trim();      // Pega o número do B.O. (ex: 482)
-            if (matchNum[3]) anoProc = matchNum[3].trim();
-        }
-
-        // Identifica o Tipo de Procedimento
         let tipoProc = 'Boletim de Ocorrência - BO';
         const procUpper = procLinha.toUpperCase();
         if (procUpper.includes('INQUERITO') || procUpper.includes(' IP ')) tipoProc = 'Inquérito Policial - IP';
         else if (procUpper.includes('TERMO CIRCUNSTANCIADO') || procUpper.includes(' TCO ')) tipoProc = 'Termo Circunstanciado de Ocorrência - TCO';
-        else if (procUpper.includes('AI')) tipoProc = 'Ato Infracional';
+        else if (procUpper.includes('ATO INFRACIONAL') || procUpper.includes(' AI ')) tipoProc = 'Ato Infracional';
 
         procedimento = {
-            delegado: /N[ÃA]O\s+INFORMADO/i.test(delegado) ? '' : delegado,
-            delegacia: codigoDelegacia, // Envia estritamente o código "132"
+            delegado: procLinha.split('/')[0]?.trim() || '',
+            delegacia: codigoDelegacia,
             numero: numeroProc,
             ano: anoProc,
             procedimento: tipoProc
         };
     }
 
-    // EXTRAÇÃO DE TODOS OS MATERIAIS (Maconha, Cocaína, Dinheiro, Outros, Veículos)
+    // Extração de Materiais
     const materiais = [];
     const blocoMaterial = texto.split(/Material:/i)[1]?.split(/(?:Histórico|Qualificação|Composição|Delegado):/i)[0] || '';
 
-    if (blocoMaterial && !/S\/A/i.test(blocoMaterial)) {
+    if (blocoMaterial && !/S\/A|Não informado/i.test(blocoMaterial)) {
 
         // A. Veículos
-        const matchVeiculo = blocoMaterial.match(/Ve[ií]culo:\s*([^\r\n]+)/i);
+        const matchVeiculo = blocoMaterial.match(/(?:Ve[ií]culo|Autom[óo]vel|Motocicleta):\s*([^\r\n]+)/i);
         if (matchVeiculo) {
-            const linhaVeiculo = matchVeiculo[1];
-            const matchPlaca = linhaVeiculo.match(/placa\s*([A-Z0-9]{7})/i) || linhaVeiculo.match(/([A-Z]{3}-?\d[A-Z0-9]\d{2})/i);
+            const linhaVeiculo = matchVeiculo[1].trim();
+            const matchPlaca = linhaVeiculo.match(/([A-Z]{3}-?\d[A-Z0-9]\d{2})/i) || linhaVeiculo.match(/placa\s*([A-Z0-9]{7})/i);
             const placa = matchPlaca ? matchPlaca[1].replace('-', '').toUpperCase() : '';
-            const situacao = linhaVeiculo.toLowerCase().includes('recuperad') ? 'Recuperado' : 'Apreendido';
+            const situacao = /recuperad/i.test(linhaVeiculo) ? 'Recuperado' : 'Apreendido';
 
-            if (placa) {
-                materiais.push({
-                    tipo: 'Veículo',
-                    descricao: linhaVeiculo.trim(),
-                    placa: placa,
-                    situacao: situacao,
-                    situacaoValue: situacao === 'Recuperado' ? '2' : '1'
-                });
-            }
+            materiais.push({
+                tipo: 'Veículo',
+                descricao: linhaVeiculo,
+                placa: placa,
+                situacao: situacao
+            });
         }
 
-        // B. Captura TODAS as linhas de Droga (ex: Skank 60g, Maconha 141g, Cocaína 15g)
+        // B. Drogas
         const linhasDroga = blocoMaterial.matchAll(/(?:Droga|Entorpecente):\s*([^(\r\n]+)(?:\([^)]*\))?\s*(?:\(?(\d+(?:[.,]\d+)?)\s*g\)?)?/gi);
 
         for (const match of linhasDroga) {
             const nomeBruto = match[1] ? match[1].trim() : '';
-
-            // Extrai a quantidade em gramas
             const matchGrama = match[0].match(/(\d+(?:[.,]\d+)?)\s*g/i);
             const gramas = matchGrama ? matchGrama[1].replace(',', '.') : (match[2] ? match[2].replace(',', '.') : '');
 
             if (nomeBruto && gramas) {
-                // Preserva o nome extraído mantendo opções como Skank, Skunk, Maconha, Cocaína, Crack, etc.
                 let nomeDrogaSipom = nomeBruto;
                 const nomeUpper = nomeBruto.toUpperCase();
 
                 if (nomeUpper.includes('SKANK') || nomeUpper.includes('SKUNK')) nomeDrogaSipom = 'Skank';
                 else if (nomeUpper.includes('COCA')) nomeDrogaSipom = 'Cocaína';
                 else if (nomeUpper.includes('CRACK')) nomeDrogaSipom = 'Crack';
-                else if (nomeUpper.includes('ECSTASY') || nomeUpper.includes('MDMA')) nomeDrogaSipom = 'Ecstasy/MDMA';
                 else if (nomeUpper.includes('MACONHA')) nomeDrogaSipom = 'Maconha';
-                else if (nomeUpper.includes('HAXIXE')) nomeDrogaSipom = 'Haxixe';
 
                 materiais.push({
                     tipo: 'Droga',
@@ -351,7 +355,7 @@ export function parseRelatorioSipom(texto) {
             }
         }
 
-        // C. Dinheiro (Ex: Dinheiro: R$ 435,50)
+        // C. Dinheiro
         const matchDinheiro = blocoMaterial.match(/Dinheiro:\s*R\$\s*([\d.,]+)/i);
         if (matchDinheiro) {
             materiais.push({
@@ -360,41 +364,34 @@ export function parseRelatorioSipom(texto) {
             });
         }
 
-        // D. Outros / Utensílios (Ex: Outros: 01 Balança... ou Utensílio: ...)
-        const matchOutros = blocoMaterial.match(/(?:Outros|Utens[ií]lio):\s*([^\r\n]+)/i);
-        if (matchOutros) {
-            materiais.push({
-                tipo: 'Outros',
-                descricao: matchOutros[1].trim(),
-                quantidade: '1'
-            });
+        // D. Outros
+        const matchOutros = blocoMaterial.matchAll(/Outros:\s*([^\r\n]+)/gi);
+        for (const m of matchOutros) {
+            if (m[1]) {
+                materiais.push({
+                    tipo: 'Outros',
+                    descricao: m[1].trim(),
+                    quantidade: '1'
+                });
+            }
         }
     }
 
-    // 3. EXTRAÇÃO COMPLETA DA COMPOSIÇÃO (Ignora "Não informado")
-    const MAPA_FUNCOES = {
-        'CMT': 'Comandante',
-        'MOT': 'Motorista',
-        'PAT': 'Patrulheiro'
-    };
-
+    // Extração da Composição
+    const MAPA_FUNCOES = { 'CMT': 'Comandante', 'MOT': 'Motorista', 'PAT': 'Patrulheiro' };
     const composicao = [];
     const linhasComp = texto.match(/(CMT|MOT|PAT)[\s:]+[^\r\n]+/gi) || [];
 
     linhasComp.forEach(linha => {
-        // Descarta a linha se a matrícula for declarada como Não Informada
         if (/M\.F\.?\s*:\s*N[ãa]o\s+informado/i.test(linha)) return;
 
         const siglaMatch = linha.match(/(CMT|MOT|PAT)/i);
         if (!siglaMatch) return;
 
         const sigla = siglaMatch[1].toUpperCase();
-
-        // Extrai a Matrícula mantendo hífens e dígitos verificadores alfanuméricos (ex: 309010-7-X)
         const matchMatricula = linha.match(/(?:M\.F\.?|Matr[ií]cula)\s*[:\-=]?\s*([\d.\-A-Za-z]+)/i);
         let matriculaLimpa = matchMatricula ? matchMatricula[1].replace(/\./g, '').trim().toUpperCase() : '';
 
-        // Se o resultado limpo for "NÃO INFORMADO" ou vazio, ignora o cadastro do policial
         if (!matriculaLimpa || /INFORMADO/i.test(matriculaLimpa)) return;
 
         const nomeLimpo = linha.replace(/(CMT|MOT|PAT)[\s:]+/i, '')
