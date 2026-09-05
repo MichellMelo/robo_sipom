@@ -983,21 +983,51 @@ export async function preencherSipomCompleto(dados) {
         const btnSalvar = page.locator('button:has-text("Registrar Ocorrência"), button:has-text("Salvar"), input[value="Registrar Ocorrência"]').first();
         await btnSalvar.waitFor({ state: 'visible', timeout: 5000 });
 
+        // Dispara o clique e aguarda a navegação/recarregamento com segurança
         await Promise.all([
-            page.waitForURL((url) => url.href.includes('/ocorrencias-exibir/'), { timeout: 20000 }).catch(() => {
-                console.log('ℹ️ Transição por URL direta não detectada. Verificando DOM...');
+            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {
+                console.log('ℹ️ Transição de página concluída.');
             }),
             btnSalvar.click({ force: true })
         ]);
 
-        await page.waitForTimeout(2000);
-        console.log(`[+] Ocorrência Registrada! URL atual: ${page.url()}`);
+        // Aguarda estabilização técnica do DOM da nova tela
+        await page.waitForTimeout(1500);
 
+        // ---------------------------------------------------------------------
+        // VALIDAÇÃO DE CAMPOS OBRIGATÓRIOS (Executada com segurança na nova DOM)
+        // ---------------------------------------------------------------------
+        const temMensagemErro = await page.evaluate(() => {
+            const msgsErro = Array.from(document.querySelectorAll('.alert-danger, .invalid-feedback, .error, span.error-message, .has-error'));
+            const msgsVisiveis = msgsErro.filter(el => el.offsetWidth > 0 && el.offsetHeight > 0 && el.textContent.trim() !== '');
+            const inputsInvalidos = document.querySelectorAll('input:invalid, select:invalid, textarea:invalid');
+
+            return msgsVisiveis.length > 0 || inputsInvalidos.length > 0;
+        });
+
+        if (temMensagemErro && page.url().includes('/ocorrencias/ocorrencias-criar')) {
+            console.error('❌ ERRO: O SIPOM recusou o registro por falta de campo obrigatório!');
+
+            const errosDetalhados = await page.evaluate(() => {
+                return Array.from(document.querySelectorAll('.alert-danger, .invalid-feedback, .has-error'))
+                    .map(e => e.textContent.trim())
+                    .filter(txt => txt.length > 0);
+            });
+
+            if (errosDetalhados.length > 0) {
+                console.error('📌 Motivos informados pelo SIPOM:', errosDetalhados.join(' | '));
+            }
+
+            throw new Error('Formulário inicial rejeitado pelo SIPOM. Verifique se algum campo obrigatório não foi preenchido.');
+        }
+
+        // Aguarda os seletores das abas estarem visíveis
         console.log('[+] Aguardando o carregamento das abas de edição...');
         const seletorAba = page.locator('#pessoas-tab, #materiais-tab, #composicoes-tab, a:has-text("Pessoas")').first();
-        await seletorAba.waitFor({ state: 'visible', timeout: 15000 });
+        await seletorAba.waitFor({ state: 'visible', timeout: 30000 });
 
-        console.log('✅ Nova página carregada! Iniciando preenchimento dos modais...\n');
+        console.log(`✅ Registro inicial concluído com sucesso! URL Atual: ${page.url()}`);
+        console.log('🚀 Iniciando preenchimento sequencial dos modais...\n');
 
         if (dados.pessoas && dados.pessoas.length > 0) {
             await preencherAbaPessoas(page, dados);

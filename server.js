@@ -48,18 +48,18 @@ function criarMenuTecladoFixo() {
         .text('🚀 Criar Ocorrência Completa').row()
         .text('👥 Pessoas').text('⚖️ Procedimento').row()
         .text('📝 Histórico').text('📦 Materiais').row()
-        .text('ext🚔 Composição').text('⚡ Preencher Tudo (Modais)').row()
+        .text('🚔 Composição').text('⚡ Preencher Tudo (Modais)').row()
         .resized();
 }
 
 function criarMenuInline() {
     return new InlineKeyboard()
         .text('🚀 1. Criar Ocorrência Completa', 'opcao_1').row()
-        .text('👥 2. Apenas Pessoas', 'opcao_2')
-        .text('⚖️ 3. Apenas Procedimento', 'opcao_3').row()
-        .text('📝 4. Apenas Histórico', 'opcao_4')
-        .text('📦 5. Apenas Materiais', 'opcao_5').row()
-        .text('🚔 6. Apenas Composição', 'opcao_6').row()
+        .text('👥 2. Pessoas', 'opcao_2')
+        .text('⚖️ 3. Procedimento', 'opcao_3').row()
+        .text('📝 4. Histórico', 'opcao_4')
+        .text('📦 5. Materiais', 'opcao_5').row()
+        .text('🚔 6. Composição', 'opcao_6').row()
         .text('⚡ 7. PREENCHER TUDO (Modais)', 'opcao_7');
 }
 
@@ -182,7 +182,7 @@ bot.on('message:text', async (ctx) => {
     else if (textoMensagem === '⚖️ Procedimento') acaoBotao = 'opcao_3';
     else if (textoMensagem === '📝 Histórico') acaoBotao = 'opcao_4';
     else if (textoMensagem === '📦 Materiais') acaoBotao = 'opcao_5';
-    else if (textoMensagem === 'ext🚔 Composição' || textoMensagem === '🚔 Composição') acaoBotao = 'opcao_6';
+    else if (textoMensagem === '🚔 Composição' || textoMensagem === '🚔 Composição') acaoBotao = 'opcao_6';
     else if (textoMensagem === '⚡ Preencher Tudo (Modais)') acaoBotao = 'opcao_7';
 
     if (acaoBotao) {
