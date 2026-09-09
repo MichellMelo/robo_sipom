@@ -462,12 +462,12 @@ export async function preencherModalMaterial(page, materiais) {
         await abaMat.waitFor({ state: 'visible', timeout: 5000 });
         await abaMat.click({ force: true });
 
-        await page.waitForSelector('#materiais.active, #materiais.show', { timeout: 5000 }).catch(() => { });
-        await page.waitForTimeout(600);
+        await page.waitForTimeout(800);
 
         for (const item of lista) {
             console.log(`[+] Adicionando Material: [${item.tipo}]...`);
 
+            // 1. ABRIR MODAL MATERIAL
             await page.evaluate(() => {
                 if (typeof $ !== 'undefined' && $('#modalMaterial').length) {
                     $('#modalMaterial').modal('show');
@@ -479,39 +479,131 @@ export async function preencherModalMaterial(page, materiais) {
             });
 
             const modal = page.locator('#modalMaterial, div.modal.show').first();
-            try {
-                await modal.waitFor({ state: 'visible', timeout: 4000 });
-            } catch (e) {
-                const btnAbrir = page.locator('#materiais button[data-target="#modalMaterial"]').first();
-                if (await btnAbrir.isVisible({ timeout: 2000 })) {
-                    await btnAbrir.click({ force: true });
-                }
-                await modal.waitFor({ state: 'visible', timeout: 5000 });
-            }
-
+            await modal.waitFor({ state: 'visible', timeout: 8000 });
             await page.waitForTimeout(500);
 
+            // =========================================================
+            // PASSO 1: SELECIONAR "ARMA DE FOGO" EM select[name="material_tipo"]
+            // =========================================================
             await page.evaluate(({ tipoMaterial }) => {
-                const selectTipo = document.querySelector('#modalMaterial select[name*="tipo"], #modalMaterial select');
+                const selectTipo = document.querySelector('select[name="material_tipo"]');
                 if (selectTipo) {
                     const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
                     const alvo = norm(tipoMaterial);
 
-                    const opt = Array.from(selectTipo.options).find(o => norm(o.textContent).includes(alvo));
+                    const opt = Array.from(selectTipo.options).find(o => {
+                        const txt = norm(o.textContent);
+                        return txt === alvo || txt.includes(alvo) || (alvo.includes('arma') && txt.includes('arma'));
+                    });
+
                     if (opt) {
                         selectTipo.value = opt.value;
+                        selectTipo.dispatchEvent(new Event('input', { bubbles: true }));
                         selectTipo.dispatchEvent(new Event('change', { bubbles: true }));
                         if (typeof $ !== 'undefined') $(selectTipo).trigger('change');
                     }
                 }
             }, { tipoMaterial: item.tipo });
 
-            await page.waitForTimeout(500);
+            // Pausa essencial para o SIPOM renderizar os campos de Arma no DOM
+            await page.waitForTimeout(800);
 
-            if (item.tipo === 'Dinheiro') {
+            // =========================================================
+            // PASSO A PASSO: PREENCHIMENTO DE ARMA DE FOGO
+            // =========================================================
+            if (item.tipo === 'Arma de Fogo' || item.tipo === 'Arma') {
+                console.log(`[+] Preenchendo Arma: "${item.subTipo || 'Revolver'}" | Marca: ${item.marca || 'Taurus'} | Calibre: ${item.calibre || '.38'}...`);
+
+                // PASSO 2: Tipo da Arma (select name="arma_tipo") [IMG 1 & 2]
+                if (item.subTipo) {
+                    await page.evaluate(({ subTipo }) => {
+                        const selectSub = document.querySelector('select[name="arma_tipo"]');
+                        if (selectSub) {
+                            const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
+                            const alvo = norm(subTipo);
+                            const opt = Array.from(selectSub.options).find(o => norm(o.textContent).includes(alvo));
+                            if (opt) {
+                                selectSub.value = opt.value;
+                                selectSub.dispatchEvent(new Event('change', { bubbles: true }));
+                                if (typeof $ !== 'undefined') $(selectSub).trigger('change');
+                            }
+                        }
+                    }, { subTipo: item.subTipo });
+                }
+
+                await page.waitForTimeout(400);
+
+                // PASSO 3: Preencher Marca (Select2 de Marca) [IMG 3 & 4]
+                if (item.marca) {
+                    try {
+                        const containerMarca = page.locator('#modalMaterial span[id*="select2-arma_marca"]').first();
+                        if (await containerMarca.isVisible({ timeout: 2000 })) {
+                            await containerMarca.click({ force: true });
+                            await page.waitForTimeout(300);
+
+                            const searchInput = page.locator('.select2-container--open input.select2-search__field').first();
+                            if (await searchInput.isVisible({ timeout: 2000 })) {
+                                await searchInput.fill(item.marca);
+                                await page.waitForTimeout(500);
+                                await page.keyboard.press('Enter');
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('⚠️ Falha ao selecionar Marca via Select2:', e.message);
+                    }
+                }
+
+                await page.waitForTimeout(400);
+
+                // PASSO 4: Preencher Calibre (Select2 de Calibre) [IMG 5 & 6]
+                if (item.calibre) {
+                    try {
+                        const containerCalibre = page.locator('#modalMaterial span[id*="select2-arma_calibre"]').first();
+                        if (await containerCalibre.isVisible({ timeout: 2000 })) {
+                            await containerCalibre.click({ force: true });
+                            await page.waitForTimeout(300);
+
+                            const searchInput = page.locator('.select2-container--open input.select2-search__field').first();
+                            if (await searchInput.isVisible({ timeout: 2000 })) {
+                                await searchInput.fill(item.calibre);
+                                await page.waitForTimeout(500);
+                                await page.keyboard.press('Enter');
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('⚠️ Falha ao selecionar Calibre via Select2:', e.message);
+                    }
+                }
+
+                await page.waitForTimeout(400);
+
+                // PASSO 5: Número de Série (input name="arma_numero") [IMG 7]
+                if (item.numeroSerie) {
+                    const inputNumero = page.locator('input[name="arma_numero"]').first();
+                    if (await inputNumero.isVisible({ timeout: 2000 })) {
+                        await inputNumero.fill(item.numeroSerie.toUpperCase());
+                    }
+                }
+
+                // PASSO 6: Quantidade (input name="arma_quantidade") [IMG 9]
+                const inputQtd = page.locator('input[name="arma_quantidade"]').first();
+                if (await inputQtd.isVisible({ timeout: 2000 })) {
+                    await inputQtd.fill(String(item.quantidade || '1'));
+                }
+
+                // PASSO 7: Descrição (input name="arma_descricao") [IMG 10]
+                if (item.descricao) {
+                    const inputDesc = page.locator('input[name="arma_descricao"]').first();
+                    if (await inputDesc.isVisible({ timeout: 2000 })) {
+                        await inputDesc.fill(item.descricao.toUpperCase());
+                    }
+                }
+            }
+            // =========================================================
+            // DEMAIS MATERIAIS
+            // =========================================================
+            else if (item.tipo === 'Dinheiro') {
                 const valDinheiro = String(item.valor || '').trim();
-                console.log(`[+] Preenchendo Valor do Dinheiro: "R$ ${valDinheiro}"...`);
-
                 const inputDinheiro = page.locator('input[name="dinheiro_quantidade"], #modalMaterial input[name*="dinheiro"]').first();
                 if (await inputDinheiro.isVisible({ timeout: 3000 })) {
                     await inputDinheiro.focus();
@@ -522,7 +614,6 @@ export async function preencherModalMaterial(page, materiais) {
             }
             else if (item.tipo === 'Outros') {
                 if (item.descricao) {
-                    console.log(`[+] Preenchendo Descrição (Outros): "${item.descricao}"...`);
                     const inputDesc = page.locator('input[name="outros_descricao"], #modalMaterial input[name*="descricao"]').first();
                     if (await inputDesc.isVisible({ timeout: 2000 })) {
                         await inputDesc.focus();
@@ -530,51 +621,28 @@ export async function preencherModalMaterial(page, materiais) {
                         await inputDesc.pressSequentially(item.descricao.toUpperCase(), { delay: 20 });
                     }
                 }
-
-                const qtdOutros = String(item.quantidade || '1');
-                console.log(`[+] Preenchendo Quantidade (Outros): "${qtdOutros}"...`);
                 const inputQtd = page.locator('input[name="outros_quantidade"], #modalMaterial input[name*="quantidade"]').first();
                 if (await inputQtd.isVisible({ timeout: 2000 })) {
-                    await inputQtd.fill(qtdOutros);
+                    await inputQtd.fill(String(item.quantidade || '1'));
                 }
             }
             else if (item.tipo === 'Droga') {
                 if (item.nomeDroga) {
-                    console.log(`[+] Selecionando tipo de Droga no combo: "${item.nomeDroga}"...`);
-
                     await page.evaluate(({ nome }) => {
                         const selectDroga = document.querySelector('#modalMaterial select[name="droga_id"]') ||
-                            document.querySelector('#modalMaterial select[name*="droga"]') ||
-                            Array.from(document.querySelectorAll('#modalMaterial select')).find(s => {
-                                const label = s.previousElementSibling || s.parentElement.querySelector('label');
-                                return label && label.textContent.includes('Droga');
-                            });
-
+                            document.querySelector('#modalMaterial select[name*="droga"]');
                         if (selectDroga) {
                             const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
                             const alvo = norm(nome);
-
-                            let opt = Array.from(selectDroga.options).find(o => {
-                                const txt = norm(o.textContent);
-                                return txt === alvo || txt.includes(alvo) || (alvo.includes('skank') && (txt.includes('skunk') || txt.includes('skank')));
-                            });
-
-                            if (!opt && alvo.includes('skank')) {
-                                opt = Array.from(selectDroga.options).find(o => norm(o.textContent).includes('maconha'));
-                            }
-
+                            const opt = Array.from(selectDroga.options).find(o => norm(o.textContent).includes(alvo));
                             if (opt) {
                                 selectDroga.value = opt.value;
-                                selectDroga.dispatchEvent(new Event('input', { bubbles: true }));
                                 selectDroga.dispatchEvent(new Event('change', { bubbles: true }));
-                                if (typeof $ !== 'undefined') $(selectDroga).trigger('change');
                             }
                         }
                     }, { nome: item.nomeDroga });
                 }
-
                 if (item.quantidade) {
-                    console.log(`[+] Preenchendo Quantidade/Gramas: "${item.quantidade}"...`);
                     const inputQtdDroga = page.locator('#modalMaterial input[name="droga_quantidade"], #modalMaterial input[name*="quantidade"]').first();
                     if (await inputQtdDroga.isVisible({ timeout: 2000 })) {
                         await inputQtdDroga.focus();
@@ -584,39 +652,19 @@ export async function preencherModalMaterial(page, materiais) {
                 }
             }
             else if (item.tipo === 'Veículo') {
-                console.log(`[+] Preenchendo Veículo - Placa: "${item.placa || 'S/N'}" | Modelo: "${item.descricao}"...`);
-
                 if (item.placa) {
-                    const inputPlaca = page.locator('#modalMaterial input[name*="placa"], #modalMaterial input[placeholder*="PLACA"]').first();
-                    if (await inputPlaca.isVisible({ timeout: 2000 })) {
-                        await inputPlaca.fill(item.placa.toUpperCase());
-                    }
+                    const inputPlaca = page.locator('#modalMaterial input[name*="placa"]').first();
+                    if (await inputPlaca.isVisible({ timeout: 2000 })) await inputPlaca.fill(item.placa.toUpperCase());
                 }
-
                 if (item.descricao) {
                     const inputDesc = page.locator('#modalMaterial textarea, #modalMaterial input[name*="descricao"]').first();
-                    if (await inputDesc.isVisible({ timeout: 2000 })) {
-                        await inputDesc.fill(item.descricao.toUpperCase());
-                    }
-                }
-
-                if (item.situacao) {
-                    await page.evaluate(({ sit }) => {
-                        const selectSit = document.querySelector('#modalMaterial select[name*="situacao"]');
-                        if (selectSit) {
-                            const opt = Array.from(selectSit.options).find(o => o.textContent.toUpperCase().includes(sit.toUpperCase()));
-                            if (opt) {
-                                selectSit.value = opt.value;
-                                selectSit.dispatchEvent(new Event('change', { bubbles: true }));
-                            }
-                        }
-                    }, { sit: item.situacao });
+                    if (await inputDesc.isVisible({ timeout: 2000 })) await inputDesc.fill(item.descricao.toUpperCase());
                 }
             }
 
             await page.waitForTimeout(500);
 
-            console.log('[+] Clicando no botão Salvar...');
+            console.log('[+] Clicando no botão Salvar Material...');
             const btnSalvar = page.locator('#modalMaterial button.btn-success, #modalMaterial button:has-text("Salvar"), #modalMaterial input[type="submit"]').first();
             await btnSalvar.click({ force: true });
 

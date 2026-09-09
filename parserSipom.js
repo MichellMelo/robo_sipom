@@ -330,7 +330,49 @@ export function parseRelatorioSipom(texto) {
             });
         }
 
-        // B. Drogas
+        // B. Armas de Fogo
+        const matchArma = blocoMaterial.match(/(?:Arma|Rev[óo]lver|Pistola|Espingarda|Garrucha|Carabina|Rifle|Fuzil):\s*([^\r\n]+)/i);
+        if (matchArma) {
+            const linhaArma = matchArma[1].trim();
+            const matchSerie = linhaArma.match(/(?:N[º°]?|N|Série|Serie)\s*[:\-=]?\s*([\w]+)/i);
+            const matchMarca = linhaArma.match(/(?:marca|fabricante)\s*([A-Za-z0-9]+)/i) || linhaArma.match(/(Taurus|Glock|Rossi|Imbel|Tanfoglio|Walther|Winchester|Canik)/i);
+            const matchCal = linhaArma.match(/(?:\.[\d]{2,3}|[\d]{1,2}mm)/i);
+
+            // Identifica o sub-tipo da arma (Pistola, Revolver, etc.)
+            let subTipoArma = 'Revolver';
+            if (/Pistola/i.test(linhaArma)) subTipoArma = 'Pistola';
+            else if (/Rev[óo]lver/i.test(linhaArma)) subTipoArma = 'Revolver';
+            else if (/Fuzil/i.test(linhaArma)) subTipoArma = 'Fuzil';
+            else if (/Simulacro/i.test(linhaArma)) subTipoArma = 'Simulacro';
+            else if (/Espingarda/i.test(linhaArma)) subTipoArma = 'Espingarda';
+            else if (/Carabina/i.test(linhaArma)) subTipoArma = 'Carabina';
+            else if (/Rifle/i.test(linhaArma)) subTipoArma = 'Rifle';
+
+            materiais.push({
+                tipo: 'Arma de Fogo',
+                subTipo: subTipoArma,
+                marca: matchMarca ? matchMarca[1] : 'Taurus',
+                calibre: matchCal ? matchCal[0] : '.38',
+                numeroSerie: matchSerie ? matchSerie[1].toUpperCase() : '',
+                quantidade: '1',
+                descricao: linhaArma
+            });
+        }
+
+        // C. Munições
+        const matchMunicao = blocoMaterial.match(/(?:Muniç[ãa]o|Muniç[õo]es):\s*([^\r\n]+)/i);
+        if (matchMunicao) {
+            const linhaMunicao = matchMunicao[1].trim();
+            const matchQtd = linhaMunicao.match(/^(\d+)/) || linhaMunicao.match(/(\d+)\s*(?:muniç|unid|un)/i);
+
+            materiais.push({
+                tipo: 'Munição',
+                descricao: linhaMunicao,
+                quantidade: matchQtd ? matchQtd[1] : '1'
+            });
+        }
+
+        // D. Drogas
         const linhasDroga = blocoMaterial.matchAll(/(?:Droga|Entorpecente):\s*([^(\r\n]+)(?:\([^)]*\))?\s*(?:\(?(\d+(?:[.,]\d+)?)\s*g\)?)?/gi);
 
         for (const match of linhasDroga) {
@@ -355,7 +397,7 @@ export function parseRelatorioSipom(texto) {
             }
         }
 
-        // C. Dinheiro
+        // E. Dinheiro
         const matchDinheiro = blocoMaterial.match(/Dinheiro:\s*R\$\s*([\d.,]+)/i);
         if (matchDinheiro) {
             materiais.push({
@@ -364,7 +406,7 @@ export function parseRelatorioSipom(texto) {
             });
         }
 
-        // D. Outros
+        // F. Outros
         const matchOutros = blocoMaterial.matchAll(/Outros:\s*([^\r\n]+)/gi);
         for (const m of matchOutros) {
             if (m[1]) {
