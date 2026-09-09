@@ -241,19 +241,19 @@ export function parseRelatorioSipom(texto) {
     }
 
     // =========================================================
-    // 🔍 CORREÇÃO DEFINITIVA: EXTRAÇÃO MÚLTIPLA DE PESSOAS
+    // PESSOAS (ATUALIZADO PARA O SIPOM)
     // =========================================================
     const pessoas = [];
 
     // Isola o bloco compreendido entre "Qualificação das Partes:" e as seções seguintes
-    const blocoPessoasMatch = texto.match(/(?:Qualificação das Partes|Pessoas|Conduzidos?|Acusados?|Infratores?):([\s\S]*?)(?=(?:Delegado\/Delegacia|Material|Histórico|Composição):|$)/i);
+    const blocoPessoasMatch = texto.match(/(?:Qualificação das Partes|Pessoas|Conduzidos?|Acusados?|Infratores?|Testemunhas?):([\s\S]*?)(?=(?:Delegado\/Delegacia|Material|Histórico|Composição):|$)/i);
     const textoAnalisePessoas = blocoPessoasMatch ? blocoPessoasMatch[1] : texto;
 
-    // Subdivide pelas ocorrências individuais de envolvidos
-    const blocosIndividuais = textoAnalisePessoas.split(/(?=(?:Infrator|Acusado|Conduzido|Vítima|Vitima|Suspeito):)/i);
+    // Subdivide pelas ocorrências individuais de envolvidos (incluindo Testemunha)
+    const blocosIndividuais = textoAnalisePessoas.split(/(?=(?:Infrator|Acusado|Conduzido|Vítima|Vitima|Suspeito|Testemunha):)/i);
 
     for (const bloco of blocosIndividuais) {
-        const matchNome = bloco.match(/(Infrator|Acusado|Conduzido|Vítima|Vitima|Suspeito):\s*([^\r\n]+)/i);
+        const matchNome = bloco.match(/(Infrator|Acusado|Conduzido|Vítima|Vitima|Suspeito|Testemunha):\s*([^\r\n]+)/i);
         if (!matchNome) continue;
 
         const papel = matchNome[1].trim();
@@ -268,10 +268,15 @@ export function parseRelatorioSipom(texto) {
         const maePessoa = matchMae && !/não informad/i.test(matchMae[1]) ? matchMae[1].trim() : '';
         const nascPessoa = matchNasc && !/não informad/i.test(matchNasc[1]) ? matchNasc[1].trim() : '';
 
-        let vinculo = 'Vítima';
-        if (/Infrator/i.test(papel)) vinculo = 'Infrator';
-        else if (/Acusado|Conduzido|Suspeito/i.test(papel)) vinculo = 'Acusado';
-        else if (/Vítima|Vitima/i.test(papel)) vinculo = 'Vítima';
+        // Mapeamento correto para as opções nativas do combo do SIPOM
+        let vinculo = 'Vitima';
+        if (/Infrator|Acusado|Conduzido|Suspeito/i.test(papel)) {
+            vinculo = 'Infrator'; // Mapeia Acusado/Suspeito para "Infrator" no SIPOM
+        } else if (/Vítima|Vitima/i.test(papel)) {
+            vinculo = 'Vitima';
+        } else if (/Testemunha/i.test(papel)) {
+            vinculo = 'Testemunha';
+        }
 
         pessoas.push({
             nome: nomePessoa,

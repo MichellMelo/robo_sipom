@@ -73,19 +73,19 @@ export async function preencherAbaPessoas(page, dados) {
     }
 
     try {
-        console.log('\n[+] Acessando Aba: Pessoas...');
+        console.log(`\n[+] Acessando Aba: Pessoas (${listaPessoas.length} envolvido(s))...`);
 
-        await page.evaluate(() => {
-            const tabPessoas = document.querySelector('a[href="#pessoas"]') || document.querySelector('#pessoas-tab');
-            if (tabPessoas) tabPessoas.click();
-        });
-
-        await page.waitForTimeout(1500);
+        // 1. Clicar na aba de Pessoas
+        const abaPessoas = page.locator('#pessoas-tab, a[href="#pessoas"], a:has-text("Pessoas")').first();
+        await abaPessoas.waitFor({ state: 'visible', timeout: 5000 });
+        await abaPessoas.click({ force: true });
+        await page.waitForTimeout(1000);
 
         for (const pessoa of listaPessoas) {
             console.log(`[+] Adicionando Pessoa: [${pessoa.vinculo}] ${pessoa.nome}...`);
 
-            const btnAbrirModal = page.locator('#pessoas button:has-text("Pessoa"), #pessoas .btn-success').first();
+            // 2. Abrir o modal de pessoa
+            const btnAbrirModal = page.locator('#pessoas button:has-text("Pessoa"), #pessoas .btn-success, button[data-target="#modalPessoa"]').first();
             await btnAbrirModal.waitFor({ state: 'visible', timeout: 5000 });
             await btnAbrirModal.click({ force: true });
 
@@ -93,35 +93,55 @@ export async function preencherAbaPessoas(page, dados) {
             await modalPessoa.waitFor({ state: 'visible', timeout: 8000 });
             await page.waitForTimeout(500);
 
+            // 3. Selecionar o Vínculo (Vitima, Infrator, Testemunha)
             const vinculoAlvo = pessoa.vinculo || 'Infrator';
             await page.evaluate(({ tipo }) => {
-                const select = document.querySelector('#modalPessoa select');
+                const select = document.querySelector('#modalPessoa select[name*="vinculo"]') ||
+                    document.querySelector('#modalPessoa select[name*="tipo"]') ||
+                    document.querySelector('#modalPessoa select');
+
                 if (select) {
                     const normalizar = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
                     const alvo = normalizar(tipo);
 
-                    let opt = Array.from(select.options).find(o => normalizar(o.textContent).includes(alvo));
+                    let opt = Array.from(select.options).find(o => normalizar(o.textContent) === alvo || normalizar(o.textContent).includes(alvo));
+
+                    // Mapeamento de fallback
                     if (!opt) {
-                        opt = Array.from(select.options).find(o => normalizar(o.textContent).includes('acusado') || normalizar(o.textContent).includes('infrator'));
+                        if (alvo.includes('acusado') || alvo.includes('infrator') || alvo.includes('suspeito')) {
+                            opt = Array.from(select.options).find(o => normalizar(o.textContent).includes('infrator'));
+                        } else if (alvo.includes('vitima')) {
+                            opt = Array.from(select.options).find(o => normalizar(o.textContent).includes('vitima'));
+                        } else if (alvo.includes('testemunha')) {
+                            opt = Array.from(select.options).find(o => normalizar(o.textContent).includes('testemunha'));
+                        }
                     }
 
                     if (opt) {
                         select.value = opt.value;
+                        select.dispatchEvent(new Event('input', { bubbles: true }));
                         select.dispatchEvent(new Event('change', { bubbles: true }));
+                        if (typeof $ !== 'undefined') $(select).trigger('change');
                     }
                 }
             }, { tipo: vinculoAlvo });
 
+            await page.waitForTimeout(400);
+
+            // 4. Preencher o Nome da Pessoa
             if (pessoa.nome) {
                 const inputNome = page.locator('#modalPessoa input[name*="nome"], #modalPessoa input[placeholder*="NOME"]').first();
                 if (await inputNome.isVisible({ timeout: 2000 })) {
+                    await inputNome.focus();
                     await inputNome.fill('');
                     await inputNome.fill(pessoa.nome.toUpperCase());
                     await inputNome.dispatchEvent('blur');
                 }
             }
 
-            await page.waitForTimeout(1000);
+            await page.waitForTimeout(800);
+
+            // Limpa modais de sobreposição caso o SIPOM exiba popup de busca de pessoa cadastrada
             await page.evaluate(() => {
                 const modalBD = document.querySelector('#modalPessoasEncontradasOcorrencia');
                 if (modalBD) {
@@ -132,51 +152,33 @@ export async function preencherAbaPessoas(page, dados) {
                 }
             });
 
+            // 5. Preencher Mãe (se houver)
             if (pessoa.mae) {
                 const nomeMae = pessoa.mae.toUpperCase().trim();
                 console.log(`[+] Preenchendo Mãe: "${nomeMae}"...`);
 
-                await page.evaluate(({ valorMae }) => {
-                    const inputMae = document.querySelector('#modalPessoa input[name*="mae"]') ||
-                        document.querySelector('#modalPessoa input[placeholder*="MÃE"]');
-
-                    if (inputMae) {
-                        inputMae.value = valorMae;
-                        inputMae.dispatchEvent(new Event('input', { bubbles: true }));
-                        inputMae.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                }, { valorMae: nomeMae });
+                const inputMae = page.locator('#modalPessoa input[name*="mae"], #modalPessoa input[placeholder*="MÃE"]').first();
+                if (await inputMae.isVisible({ timeout: 2000 })) {
+                    await inputMae.fill('');
+                    await inputMae.fill(nomeMae);
+                }
             }
 
             await page.waitForTimeout(500);
 
-            console.log('[+] Clicando no botão submit do modal de pessoas...');
-            await page.evaluate(() => {
-                const modal = document.querySelector('#modalPessoa') || document.querySelector('div.modal.show');
-                if (modal) {
-                    const btnSubmit = modal.querySelector('button[type="submit"]') ||
-                        modal.querySelector('input[type="submit"]') ||
-                        modal.querySelector('button.btn-success') ||
-                        Array.from(modal.querySelectorAll('button')).find(b =>
-                            b.textContent.trim().toLowerCase().includes('adicionar') ||
-                            b.textContent.trim().toLowerCase().includes('salvar') ||
-                            b.textContent.trim().toLowerCase().includes('cadastrar')
-                        );
+            // 6. Submeter o Modal e aguardar o fechamento completo
+            console.log(`[+] Salvando cadastro de ${pessoa.nome}...`);
+            const btnSalvarPessoa = page.locator('#modalPessoa button.btn-success, #modalPessoa button[type="submit"], #modalPessoa button:has-text("Adicionar"), #modalPessoa button:has-text("Salvar")').first();
+            await btnSalvarPessoa.click({ force: true });
 
-                    if (btnSubmit) {
-                        btnSubmit.click();
-                    } else {
-                        const form = modal.querySelector('form');
-                        if (form) form.requestSubmit ? form.requestSubmit() : form.submit();
-                    }
-                }
-            });
+            // Aguarda a janela sumir antes de prosseguir para a próxima pessoa
+            await modalPessoa.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => { });
+            await page.waitForTimeout(1000);
 
-            await page.waitForTimeout(1500);
-            console.log(`✅ Submit executado! Pessoa "${pessoa.nome}" enviada com sucesso.`);
+            console.log(`✅ Pessoa "${pessoa.nome}" cadastrada!`);
         }
 
-        console.log('✅ Aba Pessoas concluída!');
+        console.log('✅ Aba Pessoas finalizada com sucesso!');
 
     } catch (error) {
         console.warn('⚠️ Falha na aba de Pessoas:', error.message);
