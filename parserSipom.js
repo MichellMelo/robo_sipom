@@ -320,8 +320,8 @@ export function parseRelatorioSipom(texto) {
     if (blocoMaterial && !/S\/A|Não informado/i.test(blocoMaterial)) {
 
         // A. Veículos
-        const matchVeiculo = blocoMaterial.match(/(?:Ve[ií]culo|Autom[óo]vel|Motocicleta):\s*([^\r\n]+)/i);
-        if (matchVeiculo) {
+        const matchesVeiculo = blocoMaterial.matchAll(/(?:Ve[ií]culo|Autom[óo]vel|Motocicleta):\s*([^\r\n]+)/gi);
+        for (const matchVeiculo of matchesVeiculo) {
             const linhaVeiculo = matchVeiculo[1].trim();
             const matchPlaca = linhaVeiculo.match(/([A-Z]{3}-?\d[A-Z0-9]\d{2})/i) || linhaVeiculo.match(/placa\s*([A-Z0-9]{7})/i);
             const placa = matchPlaca ? matchPlaca[1].replace('-', '').toUpperCase() : '';

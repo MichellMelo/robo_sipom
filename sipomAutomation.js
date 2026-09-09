@@ -690,19 +690,65 @@ export async function preencherModalMaterial(page, materiais) {
                     }
                 }
             }
+
+            // =========================================================
+            // 🚗 VEÍCULO (SITUAÇÃO + PLACA COM PERDA DE FOCO)
+            // =========================================================
             else if (item.tipo === 'Veículo') {
+                const situacaoAlvo = item.situacao || 'Apreendido';
+                console.log(`[+] Preenchendo Veículo - Placa: "${item.placa || 'S/N'}" | Situação: "${situacaoAlvo}" | Descrição: "${item.descricao}"...`);
+
+                // 1. Seleciona a Situação (select name="situacao")
+                await page.evaluate(({ situacao }) => {
+                    const selectSit = document.querySelector('select[name="situacao"]') ||
+                        document.querySelector('#modalMaterial select[name*="situacao"]');
+
+                    if (selectSit) {
+                        const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
+                        const alvo = norm(situacao);
+
+                        const opt = Array.from(selectSit.options).find(o => norm(o.textContent).includes(alvo));
+
+                        if (opt) {
+                            selectSit.value = opt.value;
+                            selectSit.dispatchEvent(new Event('input', { bubbles: true }));
+                            selectSit.dispatchEvent(new Event('change', { bubbles: true }));
+                            if (typeof $ !== 'undefined') $(selectSit).trigger('change');
+                        }
+                    }
+                }, { situacao: situacaoAlvo });
+
+                await page.waitForTimeout(400);
+
+                // 2. Preenche a Placa e dispara a perda de foco (Blur + Tab)
                 if (item.placa) {
                     const inputPlaca = page.locator('#modalMaterial input[name*="placa"]').first();
-                    if (await inputPlaca.isVisible({ timeout: 2000 })) await inputPlaca.fill(item.placa.toUpperCase());
+                    if (await inputPlaca.isVisible({ timeout: 2000 })) {
+                        await inputPlaca.focus();
+                        await inputPlaca.fill('');
+                        await inputPlaca.pressSequentially(item.placa.toUpperCase(), { delay: 30 });
+
+                        // Perda de foco para acionar o gatilho JS de busca do SIPOM
+                        await inputPlaca.dispatchEvent('blur');
+                        await page.keyboard.press('Tab');
+                    }
                 }
+
+                await page.waitForTimeout(600);
+
+                // 3. Preenche a Descrição/Modelo
                 if (item.descricao) {
                     const inputDesc = page.locator('#modalMaterial textarea, #modalMaterial input[name*="descricao"]').first();
-                    if (await inputDesc.isVisible({ timeout: 2000 })) await inputDesc.fill(item.descricao.toUpperCase());
+                    if (await inputDesc.isVisible({ timeout: 2000 })) {
+                        await inputDesc.focus();
+                        await inputDesc.fill(item.descricao.toUpperCase());
+                    }
                 }
             }
 
             await page.waitForTimeout(500);
 
+            // 7. CLICAR NO BOTÃO SALVAR MATERIAL
             console.log('[+] Clicando no botão Salvar Material...');
             const btnSalvar = page.locator('#modalMaterial button.btn-success, #modalMaterial button:has-text("Salvar"), #modalMaterial input[type="submit"]').first();
             await btnSalvar.click({ force: true });
