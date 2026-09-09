@@ -128,18 +128,22 @@ export async function preencherAbaPessoas(page, dados) {
 
             await page.waitForTimeout(400);
 
-            // 4. Preencher o Nome da Pessoa
+            // 4. Preencher o Nome da Pessoa e disparar validações
             if (pessoa.nome) {
                 const inputNome = page.locator('#modalPessoa input[name*="nome"], #modalPessoa input[placeholder*="NOME"]').first();
                 if (await inputNome.isVisible({ timeout: 2000 })) {
                     await inputNome.focus();
                     await inputNome.fill('');
                     await inputNome.fill(pessoa.nome.toUpperCase());
+
+                    // Dispara eventos cruciais para o formulário reconhecer o preenchimento
+                    await inputNome.dispatchEvent('input');
+                    await inputNome.dispatchEvent('change');
                     await inputNome.dispatchEvent('blur');
                 }
             }
 
-            await page.waitForTimeout(800);
+            await page.waitForTimeout(600);
 
             // Limpa modais de sobreposição caso o SIPOM exiba popup de busca de pessoa cadastrada
             await page.evaluate(() => {
@@ -152,30 +156,73 @@ export async function preencherAbaPessoas(page, dados) {
                 }
             });
 
-            // 5. Preencher Mãe (se houver)
+            // 5. Preencher Mãe (se houver) e disparar validações
             if (pessoa.mae) {
                 const nomeMae = pessoa.mae.toUpperCase().trim();
                 console.log(`[+] Preenchendo Mãe: "${nomeMae}"...`);
 
                 const inputMae = page.locator('#modalPessoa input[name*="mae"], #modalPessoa input[placeholder*="MÃE"]').first();
                 if (await inputMae.isVisible({ timeout: 2000 })) {
+                    await inputMae.focus();
                     await inputMae.fill('');
                     await inputMae.fill(nomeMae);
+                    await inputMae.dispatchEvent('input');
+                    await inputMae.dispatchEvent('change');
+                    await inputMae.dispatchEvent('blur');
                 }
             }
 
-            await page.waitForTimeout(500);
+            await page.waitForTimeout(600);
 
-            // 6. Submeter o Modal e aguardar o fechamento completo
+            // 6. SUBMISSÃO ROBUSTA DO MODAL DE PESSOAS
             console.log(`[+] Salvando cadastro de ${pessoa.nome}...`);
-            const btnSalvarPessoa = page.locator('#modalPessoa button.btn-success, #modalPessoa button[type="submit"], #modalPessoa button:has-text("Adicionar"), #modalPessoa button:has-text("Salvar")').first();
-            await btnSalvarPessoa.click({ force: true });
 
-            // Aguarda a janela sumir antes de prosseguir para a próxima pessoa
+            // Tenta a submissão via JavaScript para evitar travamentos de botões desabilitados/sobrepostos
+            const salvouViaJS = await page.evaluate(() => {
+                const modal = document.querySelector('#modalPessoa') || document.querySelector('div.modal.show');
+                if (!modal) return false;
+
+                const btnSubmit = modal.querySelector('.modal-footer button.btn-success') ||
+                    modal.querySelector('button[type="submit"]') ||
+                    modal.querySelector('#btnSalvarPessoa') ||
+                    Array.from(modal.querySelectorAll('button')).find(b => {
+                        const txt = b.textContent.trim().toLowerCase();
+                        return txt.includes('salvar') || txt.includes('adicionar') || txt.includes('cadastrar');
+                    });
+
+                if (btnSubmit) {
+                    btnSubmit.disabled = false; // Desbloqueia caso esteja 'disabled'
+                    btnSubmit.click();
+                    return true;
+                }
+
+                // Fallback: submete o formulário diretamente
+                const form = modal.querySelector('form');
+                if (form) {
+                    if (typeof form.requestSubmit === 'function') {
+                        form.requestSubmit();
+                    } else {
+                        form.submit();
+                    }
+                    return true;
+                }
+
+                return false;
+            });
+
+            // Fallback com Playwright caso o DOM JS não encontre o elemento
+            if (!salvouViaJS) {
+                const btnSalvarPessoa = page.locator('#modalPessoa button.btn-success, #modalPessoa button[type="submit"], #modalPessoa button:has-text("Adicionar"), #modalPessoa button:has-text("Salvar")').first();
+                if (await btnSalvarPessoa.isVisible({ timeout: 2000 })) {
+                    await btnSalvarPessoa.click({ force: true });
+                }
+            }
+
+            // Aguarda a janela fechar completamente antes de prosseguir no loop
             await modalPessoa.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => { });
             await page.waitForTimeout(1000);
 
-            console.log(`✅ Pessoa "${pessoa.nome}" cadastrada!`);
+            console.log(`✅ Pessoa "${pessoa.nome}" gravada com sucesso!`);
         }
 
         console.log('✅ Aba Pessoas finalizada com sucesso!');

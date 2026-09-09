@@ -226,9 +226,9 @@ export function parseRelatorioSipom(texto) {
     // Tratamento de Endereço
     const partesEnd = enderecoBruto.split(',').map(s => s.trim());
     const rua = partesEnd[0] || '';
-    const numero = partesEnd[1] || 'S/N';
+    const numero = partesEnd[1] || '';
     const bairro = (partesEnd[2] || '').toUpperCase();
-    const cidade = partesEnd[3] || 'Fortaleza';
+    const cidade = partesEnd[3] || '';
 
     const opmLocal = typeof MAPA_BAIRROS_OPM !== 'undefined' && MAPA_BAIRROS_OPM[bairro] ? MAPA_BAIRROS_OPM[bairro] : '2ªCIA/21ºBPM';
     const naturezaSipom = typeof MAPA_NATUREZAS_SIPOM !== 'undefined' && MAPA_NATUREZAS_SIPOM[naturezaBruta.toUpperCase()] ? MAPA_NATUREZAS_SIPOM[naturezaBruta.toUpperCase()] : naturezaBruta;
