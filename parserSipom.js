@@ -359,15 +359,20 @@ export function parseRelatorioSipom(texto) {
             });
         }
 
-        // C. Munições
-        const matchMunicao = blocoMaterial.match(/(?:Muniç[ãa]o|Muniç[õo]es):\s*([^\r\n]+)/i);
+        /// C. Munições
+        const matchMunicao = blocoMaterial.match(/Muniç[ãa]o:\s*(?:Calibre:\s*)?([^\r\n]+)/i);
         if (matchMunicao) {
             const linhaMunicao = matchMunicao[1].trim();
-            const matchQtd = linhaMunicao.match(/^(\d+)/) || linhaMunicao.match(/(\d+)\s*(?:muniç|unid|un)/i);
+
+            // Extrai a quantidade (ex: "3")
+            const matchQtd = linhaMunicao.match(/Quantidade:\s*(\d+)/i) || linhaMunicao.match(/^(\d+)/) || linhaMunicao.match(/(\d+)\s*(?:muniç|unid|un)/i);
+
+            // Extrai o calibre (ex: ".38", "9mm", ".40", ".380", ".32", ".45")
+            const matchCal = linhaMunicao.match(/(?:\.[\d]{2,3}|[\d]{1,2}\s*mm)/i);
 
             materiais.push({
                 tipo: 'Munição',
-                descricao: linhaMunicao,
+                calibre: matchCal ? matchCal[0].replace(/\s+/g, '') : '.38',
                 quantidade: matchQtd ? matchQtd[1] : '1'
             });
         }

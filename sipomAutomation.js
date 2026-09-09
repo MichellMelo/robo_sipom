@@ -533,7 +533,7 @@ export async function preencherModalMaterial(page, materiais) {
 
                 await page.waitForTimeout(400);
 
-                // PASSO 3: Preencher Marca (Select2 de Marca) [IMG 3 & 4]
+                // PASSO 3: Preencher Marca (Select2 de Marca)
                 if (item.marca) {
                     try {
                         const containerMarca = page.locator('#modalMaterial span[id*="select2-arma_marca"]').first();
@@ -555,7 +555,7 @@ export async function preencherModalMaterial(page, materiais) {
 
                 await page.waitForTimeout(400);
 
-                // PASSO 4: Preencher Calibre (Select2 de Calibre) [IMG 5 & 6]
+                // PASSO 4: Preencher Calibre (Select2 de Calibre)
                 if (item.calibre) {
                     try {
                         const containerCalibre = page.locator('#modalMaterial span[id*="select2-arma_calibre"]').first();
@@ -599,6 +599,43 @@ export async function preencherModalMaterial(page, materiais) {
                     }
                 }
             }
+
+            // =========================================================
+            // 🍬 MUNIÇÃO (HTML/CAMPOS MAPEADOS)
+            // =========================================================
+            else if (item.tipo === 'Munição' || item.tipo === 'Municao') {
+                console.log(`[+] Preenchendo Munição - Calibre: "${item.calibre || '.38'}" | Quantidade: ${item.quantidade || 1}...`);
+
+                // 1. Calibre da Munição (Select2 id*="municao") [IMG 2]
+                if (item.calibre) {
+                    try {
+                        const containerCalibreMun = page.locator('#modalMaterial span[id*="select2-municao"], #modalMaterial span[id*="municao"]').first();
+                        if (await containerCalibreMun.isVisible({ timeout: 2000 })) {
+                            await containerCalibreMun.click({ force: true });
+                            await page.waitForTimeout(300);
+
+                            const searchInput = page.locator('.select2-container--open input.select2-search__field').first();
+                            if (await searchInput.isVisible({ timeout: 2000 })) {
+                                await searchInput.fill(item.calibre);
+                                await page.waitForTimeout(400);
+                                await page.keyboard.press('Enter');
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('⚠️ Falha ao selecionar Calibre da Munição via Select2:', e.message);
+                    }
+                }
+
+                await page.waitForTimeout(400);
+
+                // 2. Quantidade (input name="municao_quantidade") [IMG 3]
+                const inputQtdMun = page.locator('input[name="municao_quantidade"]').first();
+                if (await inputQtdMun.isVisible({ timeout: 2000 })) {
+                    await inputQtdMun.fill('');
+                    await inputQtdMun.fill(String(item.quantidade || '1'));
+                }
+            }
+
             // =========================================================
             // DEMAIS MATERIAIS
             // =========================================================
