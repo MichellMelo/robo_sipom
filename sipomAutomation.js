@@ -445,6 +445,28 @@ export async function preencherModalHistorico(page, textoHistorico) {
         await abaHistorico.click().catch(() => { });
         await page.waitForTimeout(1000);
 
+        // =========================================================
+        // 🔍 VERIFICAÇÃO: CHECA SE O HISTÓRICO JÁ FOI CADASTRADO
+        // =========================================================
+        const historicoExistente = await page.evaluate(({ textoNovo }) => {
+            // Busca no contêiner da aba de Históricos ou nas tabelas da página
+            const painelHistorico = document.querySelector('#historico, #historicos, div.tab-pane.active') || document.body;
+            const textoPagina = painelHistorico.textContent || '';
+
+            const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
+            const textoNovoNorm = norm(textoNovo);
+
+            // Pega os primeiros 40 caracteres para uma comparação precisa
+            const trechoComparativo = textoNovoNorm.substring(0, 40);
+
+            return norm(textoPagina).includes(trechoComparativo);
+        }, { textoNovo: textoHistorico });
+
+        if (historicoExistente) {
+            console.log('⚠️ Histórico já cadastrado no SIPOM. Ignorando inclusão duplicada.');
+            return;
+        }
+
         console.log('[+] Abrindo Modal de Histórico...');
         await page.evaluate(() => {
             if (typeof $ !== 'undefined' && $('#modalHistorico').length) {
