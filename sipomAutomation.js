@@ -815,11 +815,22 @@ export async function preencherModalMaterial(page, materiais) {
  * ABA COMPOSIÇÃO (#modalComposicao)
  */
 export async function preencherModalComposicao(page, composicao) {
-    const lista = Array.isArray(composicao) ? composicao : composicao?.lista || [];
-    if (!lista.length) return;
+    const listaBruta = Array.isArray(composicao) ? composicao : composicao?.lista || [];
+
+    // 🛑 FILTRO DE SEGURANÇA: Descarta matrículas "Nao informado", "S/A" ou vazias
+    const lista = listaBruta.filter(militar => {
+        const mf = (militar?.matricula || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+        return mf !== '' && mf !== 'nao informado' && mf !== 'nao informada' && mf !== 's/a' && mf !== 'nao';
+    });
+
+    // Se a lista estiver vazia após o filtro, ignora a aba e encerra a execução
+    if (!lista.length) {
+        console.log('⚠️ Nenhuma M.F. válida encontrada na composição. Ignorando a aba Composições.');
+        return;
+    }
 
     try {
-        console.log('\n[+] Acessando Aba: Composições...');
+        console.log(`\n[+] Acessando Aba: Composições (${lista.length} militar(es) válido(s))...`);
 
         const abaComposicao = page.locator('#composicoes-tab, a:has-text("Composições")').first();
         await abaComposicao.waitFor({ state: 'visible', timeout: 5000 });
@@ -827,8 +838,6 @@ export async function preencherModalComposicao(page, composicao) {
         await page.waitForTimeout(1000);
 
         for (const militar of lista) {
-            if (!militar.matricula && !militar.nome) continue;
-
             console.log(`[+] Adicionando PM na composição: [${militar.funcao}] ${militar.nome || militar.matricula}...`);
 
             await page.evaluate(() => {
@@ -845,6 +854,7 @@ export async function preencherModalComposicao(page, composicao) {
             await modalComposicao.waitFor({ state: 'visible', timeout: 10000 });
             await page.waitForTimeout(600);
 
+            // 1. Tipo de Policiamento
             const tipoPoliciamento = militar.tipoPoliciamento || 'Motorizado';
             await page.evaluate(({ textoAlvo }) => {
                 const select = document.querySelector('#modalComposicao select[name="policiamento_tipo"], #modalComposicao select[name="tipo_policiamento"], #modalComposicao select[name="policiamento"]');
@@ -868,6 +878,7 @@ export async function preencherModalComposicao(page, composicao) {
 
             await page.waitForTimeout(500);
 
+            // 2. Função
             const funcaoNome = militar.funcao || 'Patrulheiro';
             console.log(`[+] Selecionando Função: "${funcaoNome}"...`);
 
@@ -893,6 +904,7 @@ export async function preencherModalComposicao(page, composicao) {
 
             await page.waitForTimeout(500);
 
+            // 3. Matrícula
             const matriculaFormatada = String(militar.matricula || '').trim().toUpperCase();
             console.log(`[+] Preenchendo Matrícula: "${matriculaFormatada}"...`);
 
@@ -924,6 +936,7 @@ export async function preencherModalComposicao(page, composicao) {
                 await page.waitForTimeout(1500);
             }
 
+            // 4. Salvar
             console.log('[+] Clicando no botão Salvar/Atualizar...');
             await page.evaluate(() => {
                 const btnSalvar = document.querySelector('#btn-salvar-composicao') ||
