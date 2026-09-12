@@ -236,7 +236,13 @@ export async function preencherAbaPessoas(page, dados) {
  * ABA PROCEDIMENTOS: Preenchimento da Repartição, Delegacia e Dados do Procedimento
  */
 export async function preencherModalProcedimento(page, procedimento) {
-    if (!procedimento) return;
+    // 🛑 VALIDAÇÃO DE NÚMERO DE PROCEDIMENTO: Se não houver número válido, ignora a aba
+    const numLimpo = String(procedimento?.numero || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+
+    if (!procedimento || !numLimpo || numLimpo === 'nao informado' || numLimpo === 'nao informada' || numLimpo === 's/a') {
+        console.log('⚠️ Número do procedimento não informado no relatório. Ignorando a aba Procedimento.');
+        return;
+    }
 
     try {
         console.log('\n[+] Acessando Aba: Procedimentos...');
@@ -391,6 +397,7 @@ export async function preencherModalProcedimento(page, procedimento) {
                 if (selectDel && selectDel.options.length > 1) {
                     selectDel.selectedIndex = 1;
                     selectDel.dispatchEvent(new Event('change', { bubbles: true }));
+                    if (typeof $ !== 'undefined') $(selectDel).trigger('change');
                 }
             });
         }
