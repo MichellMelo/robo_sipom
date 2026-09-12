@@ -521,7 +521,19 @@ export async function preencherModalMaterial(page, materiais) {
         await page.waitForTimeout(800);
 
         for (const item of lista) {
-            console.log(`[+] Adicionando Material: [${item.tipo}]...`);
+            console.log(`[+] Processando Material: [${item.tipo}]...`);
+
+            // =========================================================
+            // 🛑 TRAVA DE SEGURANÇA: VEÍCULO SEM PLACA VÁLIDA
+            // =========================================================
+            if (item.tipo === 'Veículo') {
+                const placaLimpa = String(item.placa || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
+
+                if (!placaLimpa || placaLimpa === 'NAO INFORMADO' || placaLimpa === 'S/N' || placaLimpa === 'SA') {
+                    console.log(`⚠️ Veículo sem placa válida informada ("${item.placa || 'Vazia'}"). Ignorando este material.`);
+                    continue; // Pula para o próximo item do loop sem abrir o modal
+                }
+            }
 
             // 1. ABRIR MODAL MATERIAL
             await page.evaluate(() => {
@@ -539,7 +551,7 @@ export async function preencherModalMaterial(page, materiais) {
             await page.waitForTimeout(500);
 
             // =========================================================
-            // PASSO 1: SELECIONAR "ARMA DE FOGO" EM select[name="material_tipo"]
+            // PASSO 1: SELECIONAR TIPO DE MATERIAL EM select[name="material_tipo"]
             // =========================================================
             await page.evaluate(({ tipoMaterial }) => {
                 const selectTipo = document.querySelector('select[name="material_tipo"]');
@@ -561,16 +573,15 @@ export async function preencherModalMaterial(page, materiais) {
                 }
             }, { tipoMaterial: item.tipo });
 
-            // Pausa essencial para o SIPOM renderizar os campos de Arma no DOM
+            // Pausa essencial para o SIPOM renderizar os campos específicos no DOM
             await page.waitForTimeout(800);
 
             // =========================================================
-            // PASSO A PASSO: PREENCHIMENTO DE ARMA DE FOGO
+            // ARMA DE FOGO
             // =========================================================
             if (item.tipo === 'Arma de Fogo' || item.tipo === 'Arma') {
                 console.log(`[+] Preenchendo Arma: "${item.subTipo || 'Revolver'}" | Marca: ${item.marca || 'Taurus'} | Calibre: ${item.calibre || '.38'}...`);
 
-                // PASSO 2: Tipo da Arma (select name="arma_tipo") [IMG 1 & 2]
                 if (item.subTipo) {
                     await page.evaluate(({ subTipo }) => {
                         const selectSub = document.querySelector('select[name="arma_tipo"]');
@@ -589,7 +600,6 @@ export async function preencherModalMaterial(page, materiais) {
 
                 await page.waitForTimeout(400);
 
-                // PASSO 3: Preencher Marca (Select2 de Marca)
                 if (item.marca) {
                     try {
                         const containerMarca = page.locator('#modalMaterial span[id*="select2-arma_marca"]').first();
@@ -611,7 +621,6 @@ export async function preencherModalMaterial(page, materiais) {
 
                 await page.waitForTimeout(400);
 
-                // PASSO 4: Preencher Calibre (Select2 de Calibre)
                 if (item.calibre) {
                     try {
                         const containerCalibre = page.locator('#modalMaterial span[id*="select2-arma_calibre"]').first();
@@ -633,7 +642,6 @@ export async function preencherModalMaterial(page, materiais) {
 
                 await page.waitForTimeout(400);
 
-                // PASSO 5: Número de Série (input name="arma_numero") [IMG 7]
                 if (item.numeroSerie) {
                     const inputNumero = page.locator('input[name="arma_numero"]').first();
                     if (await inputNumero.isVisible({ timeout: 2000 })) {
@@ -641,13 +649,11 @@ export async function preencherModalMaterial(page, materiais) {
                     }
                 }
 
-                // PASSO 6: Quantidade (input name="arma_quantidade") [IMG 9]
                 const inputQtd = page.locator('input[name="arma_quantidade"]').first();
                 if (await inputQtd.isVisible({ timeout: 2000 })) {
                     await inputQtd.fill(String(item.quantidade || '1'));
                 }
 
-                // PASSO 7: Descrição (input name="arma_descricao") [IMG 10]
                 if (item.descricao) {
                     const inputDesc = page.locator('input[name="arma_descricao"]').first();
                     if (await inputDesc.isVisible({ timeout: 2000 })) {
@@ -657,12 +663,11 @@ export async function preencherModalMaterial(page, materiais) {
             }
 
             // =========================================================
-            // 🍬 MUNIÇÃO (HTML/CAMPOS MAPEADOS)
+            // MUNIÇÃO
             // =========================================================
             else if (item.tipo === 'Munição' || item.tipo === 'Municao') {
                 console.log(`[+] Preenchendo Munição - Calibre: "${item.calibre || '.38'}" | Quantidade: ${item.quantidade || 1}...`);
 
-                // 1. Calibre da Munição (Select2 id*="municao") [IMG 2]
                 if (item.calibre) {
                     try {
                         const containerCalibreMun = page.locator('#modalMaterial span[id*="select2-municao"], #modalMaterial span[id*="municao"]').first();
@@ -684,7 +689,6 @@ export async function preencherModalMaterial(page, materiais) {
 
                 await page.waitForTimeout(400);
 
-                // 2. Quantidade (input name="municao_quantidade") [IMG 3]
                 const inputQtdMun = page.locator('input[name="municao_quantidade"]').first();
                 if (await inputQtdMun.isVisible({ timeout: 2000 })) {
                     await inputQtdMun.fill('');
@@ -749,8 +753,9 @@ export async function preencherModalMaterial(page, materiais) {
             // 🚗 VEÍCULO (SITUAÇÃO + PLACA COM PERDA DE FOCO)
             // =========================================================
             else if (item.tipo === 'Veículo') {
+                const placaLimpa = item.placa.toUpperCase();
                 const situacaoAlvo = item.situacao || 'Apreendido';
-                console.log(`[+] Preenchendo Veículo - Placa: "${item.placa || 'S/N'}" | Situação: "${situacaoAlvo}" | Descrição: "${item.descricao}"...`);
+                console.log(`[+] Preenchendo Veículo - Placa: "${placaLimpa}" | Situação: "${situacaoAlvo}" | Descrição: "${item.descricao}"...`);
 
                 // 1. Seleciona a Situação (select name="situacao")
                 await page.evaluate(({ situacao }) => {
@@ -760,7 +765,6 @@ export async function preencherModalMaterial(page, materiais) {
                     if (selectSit) {
                         const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
                         const alvo = norm(situacao);
-
                         const opt = Array.from(selectSit.options).find(o => norm(o.textContent).includes(alvo));
 
                         if (opt) {
@@ -775,17 +779,15 @@ export async function preencherModalMaterial(page, materiais) {
                 await page.waitForTimeout(400);
 
                 // 2. Preenche a Placa e dispara a perda de foco (Blur + Tab)
-                if (item.placa) {
-                    const inputPlaca = page.locator('#modalMaterial input[name*="placa"]').first();
-                    if (await inputPlaca.isVisible({ timeout: 2000 })) {
-                        await inputPlaca.focus();
-                        await inputPlaca.fill('');
-                        await inputPlaca.pressSequentially(item.placa.toUpperCase(), { delay: 30 });
+                const inputPlaca = page.locator('#modalMaterial input[name*="placa"]').first();
+                if (await inputPlaca.isVisible({ timeout: 2000 })) {
+                    await inputPlaca.focus();
+                    await inputPlaca.fill('');
+                    await inputPlaca.pressSequentially(placaLimpa, { delay: 30 });
 
-                        // Perda de foco para acionar o gatilho JS de busca do SIPOM
-                        await inputPlaca.dispatchEvent('blur');
-                        await page.keyboard.press('Tab');
-                    }
+                    // Perda de foco para acionar o gatilho JS de busca do SIPOM
+                    await inputPlaca.dispatchEvent('blur');
+                    await page.keyboard.press('Tab');
                 }
 
                 await page.waitForTimeout(600);
@@ -802,7 +804,9 @@ export async function preencherModalMaterial(page, materiais) {
 
             await page.waitForTimeout(500);
 
-            // 7. CLICAR NO BOTÃO SALVAR MATERIAL
+            // =========================================================
+            // SUBMISSÃO DO MODAL DE MATERIAL
+            // =========================================================
             console.log('[+] Clicando no botão Salvar Material...');
             const btnSalvar = page.locator('#modalMaterial button.btn-success, #modalMaterial button:has-text("Salvar"), #modalMaterial input[type="submit"]').first();
             await btnSalvar.click({ force: true });

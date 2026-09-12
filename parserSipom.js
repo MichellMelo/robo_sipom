@@ -380,6 +380,12 @@ export function parseRelatorioSipom(texto) {
             const placaBruta = matchPlaca ? matchPlaca[1].replace('-', '').toUpperCase() : '';
             const placa = !eInvalido(placaBruta) ? placaBruta : '';
 
+            // 🛑 SE NÃO HOUVER PLACA VÁLIDA (OU FOR "NAO INFORMADO"), IGNORA O VEÍCULO
+            if (!placa) {
+                console.log(`[PARSER] Veículo ignorado por falta de placa válida: "${linhaVeiculo}"`);
+                continue;
+            }
+
             const situacao = /recuperad/i.test(linhaVeiculo) ? 'Recuperado' : 'Apreendido';
 
             materiais.push({
