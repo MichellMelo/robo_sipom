@@ -39,7 +39,9 @@ O **Robô SIPOM** é uma solução desenvolvida para automatizar a inserção de
 ├── .env                    # Variáveis de ambiente locais
 ├── package.json            # Dependências do projeto e scripts de execução
 └── README.md               # Documentação do projeto
+
 ⚙️ Configuração e Instalação
+
 1. Pré-requisitos
 Node.js v18 ou superior instalado.
 
@@ -48,6 +50,7 @@ Google Chrome instalado no ambiente de execução.
 Token de Bot obtido junto ao @BotFather no Telegram.
 
 2. Instalação de Dependências
+
 Bash
 # Clone o repositório
 git clone [https://github.com/seu-usuario/robo-sipom.git](https://github.com/seu-usuario/robo-sipom.git)
@@ -57,17 +60,22 @@ cd robo-sipom
 
 # Instale os pacotes
 npm install
+
 3. Configuração do Arquivo .env
 Crie um arquivo .env na raiz do projeto com as seguintes variáveis:
 
 Snippet de código
+
 PORT=10000
 TELEGRAM_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyZ
 TELEGRAM_CHAT_ID=123456789 # Opcional: ID do chat para notificações automáticas
+
 4. Executando a Aplicação
+
 Bash
 # Iniciar o servidor e o bot
 node server.js
+
 📋 Fluxo de Utilização (Telegram)
 Início: Envie o comando /start ou /menu no Telegram para exibir as instruções e ativar os botões.
 
@@ -105,6 +113,7 @@ Plaintext
                                                        │
                                                        ▼
                                            [ Navegador / SIPOM Web ]
+
 🛡️ Licença e Segurança
 Projeto de uso privado e restrito a operadores autorizados. Não inclua credenciais operacionais nem tokens do Telegram diretamente no código-fonte.
 ```

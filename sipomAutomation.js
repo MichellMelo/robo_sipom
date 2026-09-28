@@ -73,19 +73,19 @@ export async function preencherAbaPessoas(page, dados) {
     }
 
     try {
-        console.log('\n[+] Acessando Aba: Pessoas...');
+        console.log(`\n[+] Acessando Aba: Pessoas (${listaPessoas.length} envolvido(s))...`);
 
-        await page.evaluate(() => {
-            const tabPessoas = document.querySelector('a[href="#pessoas"]') || document.querySelector('#pessoas-tab');
-            if (tabPessoas) tabPessoas.click();
-        });
-
-        await page.waitForTimeout(1500);
+        // 1. Clicar na aba de Pessoas
+        const abaPessoas = page.locator('#pessoas-tab, a[href="#pessoas"], a:has-text("Pessoas")').first();
+        await abaPessoas.waitFor({ state: 'visible', timeout: 5000 });
+        await abaPessoas.click({ force: true });
+        await page.waitForTimeout(1000);
 
         for (const pessoa of listaPessoas) {
             console.log(`[+] Adicionando Pessoa: [${pessoa.vinculo}] ${pessoa.nome}...`);
 
-            const btnAbrirModal = page.locator('#pessoas button:has-text("Pessoa"), #pessoas .btn-success').first();
+            // 2. Abrir o modal de pessoa
+            const btnAbrirModal = page.locator('#pessoas button:has-text("Pessoa"), #pessoas .btn-success, button[data-target="#modalPessoa"]').first();
             await btnAbrirModal.waitFor({ state: 'visible', timeout: 5000 });
             await btnAbrirModal.click({ force: true });
 
@@ -93,35 +93,59 @@ export async function preencherAbaPessoas(page, dados) {
             await modalPessoa.waitFor({ state: 'visible', timeout: 8000 });
             await page.waitForTimeout(500);
 
+            // 3. Selecionar o Vínculo (Vitima, Infrator, Testemunha)
             const vinculoAlvo = pessoa.vinculo || 'Infrator';
             await page.evaluate(({ tipo }) => {
-                const select = document.querySelector('#modalPessoa select');
+                const select = document.querySelector('#modalPessoa select[name*="vinculo"]') ||
+                    document.querySelector('#modalPessoa select[name*="tipo"]') ||
+                    document.querySelector('#modalPessoa select');
+
                 if (select) {
                     const normalizar = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
                     const alvo = normalizar(tipo);
 
-                    let opt = Array.from(select.options).find(o => normalizar(o.textContent).includes(alvo));
+                    let opt = Array.from(select.options).find(o => normalizar(o.textContent) === alvo || normalizar(o.textContent).includes(alvo));
+
+                    // Mapeamento de fallback
                     if (!opt) {
-                        opt = Array.from(select.options).find(o => normalizar(o.textContent).includes('acusado') || normalizar(o.textContent).includes('infrator'));
+                        if (alvo.includes('acusado') || alvo.includes('infrator') || alvo.includes('suspeito')) {
+                            opt = Array.from(select.options).find(o => normalizar(o.textContent).includes('infrator'));
+                        } else if (alvo.includes('vitima')) {
+                            opt = Array.from(select.options).find(o => normalizar(o.textContent).includes('vitima'));
+                        } else if (alvo.includes('testemunha')) {
+                            opt = Array.from(select.options).find(o => normalizar(o.textContent).includes('testemunha'));
+                        }
                     }
 
                     if (opt) {
                         select.value = opt.value;
+                        select.dispatchEvent(new Event('input', { bubbles: true }));
                         select.dispatchEvent(new Event('change', { bubbles: true }));
+                        if (typeof $ !== 'undefined') $(select).trigger('change');
                     }
                 }
             }, { tipo: vinculoAlvo });
 
+            await page.waitForTimeout(400);
+
+            // 4. Preencher o Nome da Pessoa e disparar validações
             if (pessoa.nome) {
                 const inputNome = page.locator('#modalPessoa input[name*="nome"], #modalPessoa input[placeholder*="NOME"]').first();
                 if (await inputNome.isVisible({ timeout: 2000 })) {
+                    await inputNome.focus();
                     await inputNome.fill('');
                     await inputNome.fill(pessoa.nome.toUpperCase());
+
+                    // Dispara eventos cruciais para o formulário reconhecer o preenchimento
+                    await inputNome.dispatchEvent('input');
+                    await inputNome.dispatchEvent('change');
                     await inputNome.dispatchEvent('blur');
                 }
             }
 
-            await page.waitForTimeout(1000);
+            await page.waitForTimeout(600);
+
+            // Limpa modais de sobreposição caso o SIPOM exiba popup de busca de pessoa cadastrada
             await page.evaluate(() => {
                 const modalBD = document.querySelector('#modalPessoasEncontradasOcorrencia');
                 if (modalBD) {
@@ -132,51 +156,76 @@ export async function preencherAbaPessoas(page, dados) {
                 }
             });
 
+            // 5. Preencher Mãe (se houver) e disparar validações
             if (pessoa.mae) {
                 const nomeMae = pessoa.mae.toUpperCase().trim();
                 console.log(`[+] Preenchendo Mãe: "${nomeMae}"...`);
 
-                await page.evaluate(({ valorMae }) => {
-                    const inputMae = document.querySelector('#modalPessoa input[name*="mae"]') ||
-                        document.querySelector('#modalPessoa input[placeholder*="MÃE"]');
-
-                    if (inputMae) {
-                        inputMae.value = valorMae;
-                        inputMae.dispatchEvent(new Event('input', { bubbles: true }));
-                        inputMae.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                }, { valorMae: nomeMae });
+                const inputMae = page.locator('#modalPessoa input[name*="mae"], #modalPessoa input[placeholder*="MÃE"]').first();
+                if (await inputMae.isVisible({ timeout: 2000 })) {
+                    await inputMae.focus();
+                    await inputMae.fill('');
+                    await inputMae.fill(nomeMae);
+                    await inputMae.dispatchEvent('input');
+                    await inputMae.dispatchEvent('change');
+                    await inputMae.dispatchEvent('blur');
+                }
             }
 
-            await page.waitForTimeout(500);
+            await page.waitForTimeout(600);
 
-            console.log('[+] Clicando no botão submit do modal de pessoas...');
-            await page.evaluate(() => {
+            // 6. SUBMISSÃO ROBUSTA DO MODAL DE PESSOAS
+            console.log(`[+] Salvando cadastro de ${pessoa.nome}...`);
+
+            // Tenta a submissão via JavaScript para evitar travamentos de botões desabilitados/sobrepostos
+            const salvouViaJS = await page.evaluate(() => {
                 const modal = document.querySelector('#modalPessoa') || document.querySelector('div.modal.show');
-                if (modal) {
-                    const btnSubmit = modal.querySelector('button[type="submit"]') ||
-                        modal.querySelector('input[type="submit"]') ||
-                        modal.querySelector('button.btn-success') ||
-                        Array.from(modal.querySelectorAll('button')).find(b =>
-                            b.textContent.trim().toLowerCase().includes('adicionar') ||
-                            b.textContent.trim().toLowerCase().includes('salvar') ||
-                            b.textContent.trim().toLowerCase().includes('cadastrar')
-                        );
+                if (!modal) return false;
 
-                    if (btnSubmit) {
-                        btnSubmit.click();
-                    } else {
-                        const form = modal.querySelector('form');
-                        if (form) form.requestSubmit ? form.requestSubmit() : form.submit();
-                    }
+                const btnSubmit = modal.querySelector('.modal-footer button.btn-success') ||
+                    modal.querySelector('button[type="submit"]') ||
+                    modal.querySelector('#btnSalvarPessoa') ||
+                    Array.from(modal.querySelectorAll('button')).find(b => {
+                        const txt = b.textContent.trim().toLowerCase();
+                        return txt.includes('salvar') || txt.includes('adicionar') || txt.includes('cadastrar');
+                    });
+
+                if (btnSubmit) {
+                    btnSubmit.disabled = false; // Desbloqueia caso esteja 'disabled'
+                    btnSubmit.click();
+                    return true;
                 }
+
+                // Fallback: submete o formulário diretamente
+                const form = modal.querySelector('form');
+                if (form) {
+                    if (typeof form.requestSubmit === 'function') {
+                        form.requestSubmit();
+                    } else {
+                        form.submit();
+                    }
+                    return true;
+                }
+
+                return false;
             });
 
-            await page.waitForTimeout(1500);
-            console.log(`✅ Submit executado! Pessoa "${pessoa.nome}" enviada com sucesso.`);
+            // Fallback com Playwright caso o DOM JS não encontre o elemento
+            if (!salvouViaJS) {
+                const btnSalvarPessoa = page.locator('#modalPessoa button.btn-success, #modalPessoa button[type="submit"], #modalPessoa button:has-text("Adicionar"), #modalPessoa button:has-text("Salvar")').first();
+                if (await btnSalvarPessoa.isVisible({ timeout: 2000 })) {
+                    await btnSalvarPessoa.click({ force: true });
+                }
+            }
+
+            // Aguarda a janela fechar completamente antes de prosseguir no loop
+            await modalPessoa.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => { });
+            await page.waitForTimeout(1000);
+
+            console.log(`✅ Pessoa "${pessoa.nome}" gravada com sucesso!`);
         }
 
-        console.log('✅ Aba Pessoas concluída!');
+        console.log('✅ Aba Pessoas finalizada com sucesso!');
 
     } catch (error) {
         console.warn('⚠️ Falha na aba de Pessoas:', error.message);
@@ -187,7 +236,13 @@ export async function preencherAbaPessoas(page, dados) {
  * ABA PROCEDIMENTOS: Preenchimento da Repartição, Delegacia e Dados do Procedimento
  */
 export async function preencherModalProcedimento(page, procedimento) {
-    if (!procedimento) return;
+    // 🛑 VALIDAÇÃO DE NÚMERO DE PROCEDIMENTO: Se não houver número válido, ignora a aba
+    const numLimpo = String(procedimento?.numero || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+
+    if (!procedimento || !numLimpo || numLimpo === 'nao informado' || numLimpo === 'nao informada' || numLimpo === 's/a') {
+        console.log('⚠️ Número do procedimento não informado no relatório. Ignorando a aba Procedimento.');
+        return;
+    }
 
     try {
         console.log('\n[+] Acessando Aba: Procedimentos...');
@@ -342,6 +397,7 @@ export async function preencherModalProcedimento(page, procedimento) {
                 if (selectDel && selectDel.options.length > 1) {
                     selectDel.selectedIndex = 1;
                     selectDel.dispatchEvent(new Event('change', { bubbles: true }));
+                    if (typeof $ !== 'undefined') $(selectDel).trigger('change');
                 }
             });
         }
@@ -388,6 +444,28 @@ export async function preencherModalHistorico(page, textoHistorico) {
         const abaHistorico = page.locator('#historicos-tab, a:has-text("Histórico")').first();
         await abaHistorico.click().catch(() => { });
         await page.waitForTimeout(1000);
+
+        // =========================================================
+        // 🔍 VERIFICAÇÃO: CHECA SE O HISTÓRICO JÁ FOI CADASTRADO
+        // =========================================================
+        const historicoExistente = await page.evaluate(({ textoNovo }) => {
+            // Busca no contêiner da aba de Históricos ou nas tabelas da página
+            const painelHistorico = document.querySelector('#historico, #historicos, div.tab-pane.active') || document.body;
+            const textoPagina = painelHistorico.textContent || '';
+
+            const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
+            const textoNovoNorm = norm(textoNovo);
+
+            // Pega os primeiros 40 caracteres para uma comparação precisa
+            const trechoComparativo = textoNovoNorm.substring(0, 40);
+
+            return norm(textoPagina).includes(trechoComparativo);
+        }, { textoNovo: textoHistorico });
+
+        if (historicoExistente) {
+            console.log('⚠️ Histórico já cadastrado no SIPOM. Ignorando inclusão duplicada.');
+            return;
+        }
 
         console.log('[+] Abrindo Modal de Histórico...');
         await page.evaluate(() => {
@@ -462,12 +540,24 @@ export async function preencherModalMaterial(page, materiais) {
         await abaMat.waitFor({ state: 'visible', timeout: 5000 });
         await abaMat.click({ force: true });
 
-        await page.waitForSelector('#materiais.active, #materiais.show', { timeout: 5000 }).catch(() => { });
-        await page.waitForTimeout(600);
+        await page.waitForTimeout(800);
 
         for (const item of lista) {
-            console.log(`[+] Adicionando Material: [${item.tipo}]...`);
+            console.log(`[+] Processando Material: [${item.tipo}]...`);
 
+            // =========================================================
+            // 🛑 TRAVA DE SEGURANÇA: VEÍCULO SEM PLACA VÁLIDA
+            // =========================================================
+            if (item.tipo === 'Veículo') {
+                const placaLimpa = String(item.placa || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
+
+                if (!placaLimpa || placaLimpa === 'NAO INFORMADO' || placaLimpa === 'S/N' || placaLimpa === 'SA') {
+                    console.log(`⚠️ Veículo sem placa válida informada ("${item.placa || 'Vazia'}"). Ignorando este material.`);
+                    continue; // Pula para o próximo item do loop sem abrir o modal
+                }
+            }
+
+            // 1. ABRIR MODAL MATERIAL
             await page.evaluate(() => {
                 if (typeof $ !== 'undefined' && $('#modalMaterial').length) {
                     $('#modalMaterial').modal('show');
@@ -479,39 +569,160 @@ export async function preencherModalMaterial(page, materiais) {
             });
 
             const modal = page.locator('#modalMaterial, div.modal.show').first();
-            try {
-                await modal.waitFor({ state: 'visible', timeout: 4000 });
-            } catch (e) {
-                const btnAbrir = page.locator('#materiais button[data-target="#modalMaterial"]').first();
-                if (await btnAbrir.isVisible({ timeout: 2000 })) {
-                    await btnAbrir.click({ force: true });
-                }
-                await modal.waitFor({ state: 'visible', timeout: 5000 });
-            }
-
+            await modal.waitFor({ state: 'visible', timeout: 8000 });
             await page.waitForTimeout(500);
 
+            // =========================================================
+            // PASSO 1: SELECIONAR TIPO DE MATERIAL EM select[name="material_tipo"]
+            // =========================================================
             await page.evaluate(({ tipoMaterial }) => {
-                const selectTipo = document.querySelector('#modalMaterial select[name*="tipo"], #modalMaterial select');
+                const selectTipo = document.querySelector('select[name="material_tipo"]');
                 if (selectTipo) {
                     const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
                     const alvo = norm(tipoMaterial);
 
-                    const opt = Array.from(selectTipo.options).find(o => norm(o.textContent).includes(alvo));
+                    const opt = Array.from(selectTipo.options).find(o => {
+                        const txt = norm(o.textContent);
+                        return txt === alvo || txt.includes(alvo) || (alvo.includes('arma') && txt.includes('arma'));
+                    });
+
                     if (opt) {
                         selectTipo.value = opt.value;
+                        selectTipo.dispatchEvent(new Event('input', { bubbles: true }));
                         selectTipo.dispatchEvent(new Event('change', { bubbles: true }));
                         if (typeof $ !== 'undefined') $(selectTipo).trigger('change');
                     }
                 }
             }, { tipoMaterial: item.tipo });
 
-            await page.waitForTimeout(500);
+            // Pausa essencial para o SIPOM renderizar os campos específicos no DOM
+            await page.waitForTimeout(800);
 
-            if (item.tipo === 'Dinheiro') {
+            // =========================================================
+            // ARMA DE FOGO
+            // =========================================================
+            if (item.tipo === 'Arma de Fogo' || item.tipo === 'Arma') {
+                console.log(`[+] Preenchendo Arma: "${item.subTipo || 'Revolver'}" | Marca: ${item.marca || 'Taurus'} | Calibre: ${item.calibre || '.38'}...`);
+
+                if (item.subTipo) {
+                    await page.evaluate(({ subTipo }) => {
+                        const selectSub = document.querySelector('select[name="arma_tipo"]');
+                        if (selectSub) {
+                            const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
+                            const alvo = norm(subTipo);
+                            const opt = Array.from(selectSub.options).find(o => norm(o.textContent).includes(alvo));
+                            if (opt) {
+                                selectSub.value = opt.value;
+                                selectSub.dispatchEvent(new Event('change', { bubbles: true }));
+                                if (typeof $ !== 'undefined') $(selectSub).trigger('change');
+                            }
+                        }
+                    }, { subTipo: item.subTipo });
+                }
+
+                await page.waitForTimeout(400);
+
+                if (item.marca) {
+                    try {
+                        const containerMarca = page.locator('#modalMaterial span[id*="select2-arma_marca"]').first();
+                        if (await containerMarca.isVisible({ timeout: 2000 })) {
+                            await containerMarca.click({ force: true });
+                            await page.waitForTimeout(300);
+
+                            const searchInput = page.locator('.select2-container--open input.select2-search__field').first();
+                            if (await searchInput.isVisible({ timeout: 2000 })) {
+                                await searchInput.fill(item.marca);
+                                await page.waitForTimeout(500);
+                                await page.keyboard.press('Enter');
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('⚠️ Falha ao selecionar Marca via Select2:', e.message);
+                    }
+                }
+
+                await page.waitForTimeout(400);
+
+                if (item.calibre) {
+                    try {
+                        const containerCalibre = page.locator('#modalMaterial span[id*="select2-arma_calibre"]').first();
+                        if (await containerCalibre.isVisible({ timeout: 2000 })) {
+                            await containerCalibre.click({ force: true });
+                            await page.waitForTimeout(300);
+
+                            const searchInput = page.locator('.select2-container--open input.select2-search__field').first();
+                            if (await searchInput.isVisible({ timeout: 2000 })) {
+                                await searchInput.fill(item.calibre);
+                                await page.waitForTimeout(500);
+                                await page.keyboard.press('Enter');
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('⚠️ Falha ao selecionar Calibre via Select2:', e.message);
+                    }
+                }
+
+                await page.waitForTimeout(400);
+
+                if (item.numeroSerie) {
+                    const inputNumero = page.locator('input[name="arma_numero"]').first();
+                    if (await inputNumero.isVisible({ timeout: 2000 })) {
+                        await inputNumero.fill(item.numeroSerie.toUpperCase());
+                    }
+                }
+
+                const inputQtd = page.locator('input[name="arma_quantidade"]').first();
+                if (await inputQtd.isVisible({ timeout: 2000 })) {
+                    await inputQtd.fill(String(item.quantidade || '1'));
+                }
+
+                if (item.descricao) {
+                    const inputDesc = page.locator('input[name="arma_descricao"]').first();
+                    if (await inputDesc.isVisible({ timeout: 2000 })) {
+                        await inputDesc.fill(item.descricao.toUpperCase());
+                    }
+                }
+            }
+
+            // =========================================================
+            // MUNIÇÃO
+            // =========================================================
+            else if (item.tipo === 'Munição' || item.tipo === 'Municao') {
+                console.log(`[+] Preenchendo Munição - Calibre: "${item.calibre || '.38'}" | Quantidade: ${item.quantidade || 1}...`);
+
+                if (item.calibre) {
+                    try {
+                        const containerCalibreMun = page.locator('#modalMaterial span[id*="select2-municao"], #modalMaterial span[id*="municao"]').first();
+                        if (await containerCalibreMun.isVisible({ timeout: 2000 })) {
+                            await containerCalibreMun.click({ force: true });
+                            await page.waitForTimeout(300);
+
+                            const searchInput = page.locator('.select2-container--open input.select2-search__field').first();
+                            if (await searchInput.isVisible({ timeout: 2000 })) {
+                                await searchInput.fill(item.calibre);
+                                await page.waitForTimeout(400);
+                                await page.keyboard.press('Enter');
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('⚠️ Falha ao selecionar Calibre da Munição via Select2:', e.message);
+                    }
+                }
+
+                await page.waitForTimeout(400);
+
+                const inputQtdMun = page.locator('input[name="municao_quantidade"]').first();
+                if (await inputQtdMun.isVisible({ timeout: 2000 })) {
+                    await inputQtdMun.fill('');
+                    await inputQtdMun.fill(String(item.quantidade || '1'));
+                }
+            }
+
+            // =========================================================
+            // DEMAIS MATERIAIS
+            // =========================================================
+            else if (item.tipo === 'Dinheiro') {
                 const valDinheiro = String(item.valor || '').trim();
-                console.log(`[+] Preenchendo Valor do Dinheiro: "R$ ${valDinheiro}"...`);
-
                 const inputDinheiro = page.locator('input[name="dinheiro_quantidade"], #modalMaterial input[name*="dinheiro"]').first();
                 if (await inputDinheiro.isVisible({ timeout: 3000 })) {
                     await inputDinheiro.focus();
@@ -522,7 +733,6 @@ export async function preencherModalMaterial(page, materiais) {
             }
             else if (item.tipo === 'Outros') {
                 if (item.descricao) {
-                    console.log(`[+] Preenchendo Descrição (Outros): "${item.descricao}"...`);
                     const inputDesc = page.locator('input[name="outros_descricao"], #modalMaterial input[name*="descricao"]').first();
                     if (await inputDesc.isVisible({ timeout: 2000 })) {
                         await inputDesc.focus();
@@ -530,51 +740,28 @@ export async function preencherModalMaterial(page, materiais) {
                         await inputDesc.pressSequentially(item.descricao.toUpperCase(), { delay: 20 });
                     }
                 }
-
-                const qtdOutros = String(item.quantidade || '1');
-                console.log(`[+] Preenchendo Quantidade (Outros): "${qtdOutros}"...`);
                 const inputQtd = page.locator('input[name="outros_quantidade"], #modalMaterial input[name*="quantidade"]').first();
                 if (await inputQtd.isVisible({ timeout: 2000 })) {
-                    await inputQtd.fill(qtdOutros);
+                    await inputQtd.fill(String(item.quantidade || '1'));
                 }
             }
             else if (item.tipo === 'Droga') {
                 if (item.nomeDroga) {
-                    console.log(`[+] Selecionando tipo de Droga no combo: "${item.nomeDroga}"...`);
-
                     await page.evaluate(({ nome }) => {
                         const selectDroga = document.querySelector('#modalMaterial select[name="droga_id"]') ||
-                            document.querySelector('#modalMaterial select[name*="droga"]') ||
-                            Array.from(document.querySelectorAll('#modalMaterial select')).find(s => {
-                                const label = s.previousElementSibling || s.parentElement.querySelector('label');
-                                return label && label.textContent.includes('Droga');
-                            });
-
+                            document.querySelector('#modalMaterial select[name*="droga"]');
                         if (selectDroga) {
                             const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
                             const alvo = norm(nome);
-
-                            let opt = Array.from(selectDroga.options).find(o => {
-                                const txt = norm(o.textContent);
-                                return txt === alvo || txt.includes(alvo) || (alvo.includes('skank') && (txt.includes('skunk') || txt.includes('skank')));
-                            });
-
-                            if (!opt && alvo.includes('skank')) {
-                                opt = Array.from(selectDroga.options).find(o => norm(o.textContent).includes('maconha'));
-                            }
-
+                            const opt = Array.from(selectDroga.options).find(o => norm(o.textContent).includes(alvo));
                             if (opt) {
                                 selectDroga.value = opt.value;
-                                selectDroga.dispatchEvent(new Event('input', { bubbles: true }));
                                 selectDroga.dispatchEvent(new Event('change', { bubbles: true }));
-                                if (typeof $ !== 'undefined') $(selectDroga).trigger('change');
                             }
                         }
                     }, { nome: item.nomeDroga });
                 }
-
                 if (item.quantidade) {
-                    console.log(`[+] Preenchendo Quantidade/Gramas: "${item.quantidade}"...`);
                     const inputQtdDroga = page.locator('#modalMaterial input[name="droga_quantidade"], #modalMaterial input[name*="quantidade"]').first();
                     if (await inputQtdDroga.isVisible({ timeout: 2000 })) {
                         await inputQtdDroga.focus();
@@ -583,40 +770,66 @@ export async function preencherModalMaterial(page, materiais) {
                     }
                 }
             }
-            else if (item.tipo === 'Veículo') {
-                console.log(`[+] Preenchendo Veículo - Placa: "${item.placa || 'S/N'}" | Modelo: "${item.descricao}"...`);
 
-                if (item.placa) {
-                    const inputPlaca = page.locator('#modalMaterial input[name*="placa"], #modalMaterial input[placeholder*="PLACA"]').first();
-                    if (await inputPlaca.isVisible({ timeout: 2000 })) {
-                        await inputPlaca.fill(item.placa.toUpperCase());
+            // =========================================================
+            // 🚗 VEÍCULO (SITUAÇÃO + PLACA COM PERDA DE FOCO)
+            // =========================================================
+            else if (item.tipo === 'Veículo') {
+                const placaLimpa = item.placa.toUpperCase();
+                const situacaoAlvo = item.situacao || 'Apreendido';
+                console.log(`[+] Preenchendo Veículo - Placa: "${placaLimpa}" | Situação: "${situacaoAlvo}" | Descrição: "${item.descricao}"...`);
+
+                // 1. Seleciona a Situação (select name="situacao")
+                await page.evaluate(({ situacao }) => {
+                    const selectSit = document.querySelector('select[name="situacao"]') ||
+                        document.querySelector('#modalMaterial select[name*="situacao"]');
+
+                    if (selectSit) {
+                        const norm = str => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
+                        const alvo = norm(situacao);
+                        const opt = Array.from(selectSit.options).find(o => norm(o.textContent).includes(alvo));
+
+                        if (opt) {
+                            selectSit.value = opt.value;
+                            selectSit.dispatchEvent(new Event('input', { bubbles: true }));
+                            selectSit.dispatchEvent(new Event('change', { bubbles: true }));
+                            if (typeof $ !== 'undefined') $(selectSit).trigger('change');
+                        }
                     }
+                }, { situacao: situacaoAlvo });
+
+                await page.waitForTimeout(400);
+
+                // 2. Preenche a Placa e dispara a perda de foco (Blur + Tab)
+                const inputPlaca = page.locator('#modalMaterial input[name*="placa"]').first();
+                if (await inputPlaca.isVisible({ timeout: 2000 })) {
+                    await inputPlaca.focus();
+                    await inputPlaca.fill('');
+                    await inputPlaca.pressSequentially(placaLimpa, { delay: 30 });
+
+                    // Perda de foco para acionar o gatilho JS de busca do SIPOM
+                    await inputPlaca.dispatchEvent('blur');
+                    await page.keyboard.press('Tab');
                 }
 
+                await page.waitForTimeout(600);
+
+                // 3. Preenche a Descrição/Modelo
                 if (item.descricao) {
                     const inputDesc = page.locator('#modalMaterial textarea, #modalMaterial input[name*="descricao"]').first();
                     if (await inputDesc.isVisible({ timeout: 2000 })) {
+                        await inputDesc.focus();
                         await inputDesc.fill(item.descricao.toUpperCase());
                     }
-                }
-
-                if (item.situacao) {
-                    await page.evaluate(({ sit }) => {
-                        const selectSit = document.querySelector('#modalMaterial select[name*="situacao"]');
-                        if (selectSit) {
-                            const opt = Array.from(selectSit.options).find(o => o.textContent.toUpperCase().includes(sit.toUpperCase()));
-                            if (opt) {
-                                selectSit.value = opt.value;
-                                selectSit.dispatchEvent(new Event('change', { bubbles: true }));
-                            }
-                        }
-                    }, { sit: item.situacao });
                 }
             }
 
             await page.waitForTimeout(500);
 
-            console.log('[+] Clicando no botão Salvar...');
+            // =========================================================
+            // SUBMISSÃO DO MODAL DE MATERIAL
+            // =========================================================
+            console.log('[+] Clicando no botão Salvar Material...');
             const btnSalvar = page.locator('#modalMaterial button.btn-success, #modalMaterial button:has-text("Salvar"), #modalMaterial input[type="submit"]').first();
             await btnSalvar.click({ force: true });
 
@@ -635,11 +848,22 @@ export async function preencherModalMaterial(page, materiais) {
  * ABA COMPOSIÇÃO (#modalComposicao)
  */
 export async function preencherModalComposicao(page, composicao) {
-    const lista = Array.isArray(composicao) ? composicao : composicao?.lista || [];
-    if (!lista.length) return;
+    const listaBruta = Array.isArray(composicao) ? composicao : composicao?.lista || [];
+
+    // 🛑 FILTRO DE SEGURANÇA: Descarta matrículas "Nao informado", "S/A" ou vazias
+    const lista = listaBruta.filter(militar => {
+        const mf = (militar?.matricula || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+        return mf !== '' && mf !== 'nao informado' && mf !== 'nao informada' && mf !== 's/a' && mf !== 'nao';
+    });
+
+    // Se a lista estiver vazia após o filtro, ignora a aba e encerra a execução
+    if (!lista.length) {
+        console.log('⚠️ Nenhuma M.F. válida encontrada na composição. Ignorando a aba Composições.');
+        return;
+    }
 
     try {
-        console.log('\n[+] Acessando Aba: Composições...');
+        console.log(`\n[+] Acessando Aba: Composições (${lista.length} militar(es) válido(s))...`);
 
         const abaComposicao = page.locator('#composicoes-tab, a:has-text("Composições")').first();
         await abaComposicao.waitFor({ state: 'visible', timeout: 5000 });
@@ -647,8 +871,6 @@ export async function preencherModalComposicao(page, composicao) {
         await page.waitForTimeout(1000);
 
         for (const militar of lista) {
-            if (!militar.matricula && !militar.nome) continue;
-
             console.log(`[+] Adicionando PM na composição: [${militar.funcao}] ${militar.nome || militar.matricula}...`);
 
             await page.evaluate(() => {
@@ -665,6 +887,7 @@ export async function preencherModalComposicao(page, composicao) {
             await modalComposicao.waitFor({ state: 'visible', timeout: 10000 });
             await page.waitForTimeout(600);
 
+            // 1. Tipo de Policiamento
             const tipoPoliciamento = militar.tipoPoliciamento || 'Motorizado';
             await page.evaluate(({ textoAlvo }) => {
                 const select = document.querySelector('#modalComposicao select[name="policiamento_tipo"], #modalComposicao select[name="tipo_policiamento"], #modalComposicao select[name="policiamento"]');
@@ -688,6 +911,7 @@ export async function preencherModalComposicao(page, composicao) {
 
             await page.waitForTimeout(500);
 
+            // 2. Função
             const funcaoNome = militar.funcao || 'Patrulheiro';
             console.log(`[+] Selecionando Função: "${funcaoNome}"...`);
 
@@ -713,6 +937,7 @@ export async function preencherModalComposicao(page, composicao) {
 
             await page.waitForTimeout(500);
 
+            // 3. Matrícula
             const matriculaFormatada = String(militar.matricula || '').trim().toUpperCase();
             console.log(`[+] Preenchendo Matrícula: "${matriculaFormatada}"...`);
 
@@ -744,6 +969,7 @@ export async function preencherModalComposicao(page, composicao) {
                 await page.waitForTimeout(1500);
             }
 
+            // 4. Salvar
             console.log('[+] Clicando no botão Salvar/Atualizar...');
             await page.evaluate(() => {
                 const btnSalvar = document.querySelector('#btn-salvar-composicao') ||
@@ -983,21 +1209,51 @@ export async function preencherSipomCompleto(dados) {
         const btnSalvar = page.locator('button:has-text("Registrar Ocorrência"), button:has-text("Salvar"), input[value="Registrar Ocorrência"]').first();
         await btnSalvar.waitFor({ state: 'visible', timeout: 5000 });
 
+        // Dispara o clique e aguarda a navegação/recarregamento com segurança
         await Promise.all([
-            page.waitForURL((url) => url.href.includes('/ocorrencias-exibir/'), { timeout: 20000 }).catch(() => {
-                console.log('ℹ️ Transição por URL direta não detectada. Verificando DOM...');
+            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {
+                console.log('ℹ️ Transição de página concluída.');
             }),
             btnSalvar.click({ force: true })
         ]);
 
-        await page.waitForTimeout(2000);
-        console.log(`[+] Ocorrência Registrada! URL atual: ${page.url()}`);
+        // Aguarda estabilização técnica do DOM da nova tela
+        await page.waitForTimeout(1500);
 
+        // ---------------------------------------------------------------------
+        // VALIDAÇÃO DE CAMPOS OBRIGATÓRIOS (Executada com segurança na nova DOM)
+        // ---------------------------------------------------------------------
+        const temMensagemErro = await page.evaluate(() => {
+            const msgsErro = Array.from(document.querySelectorAll('.alert-danger, .invalid-feedback, .error, span.error-message, .has-error'));
+            const msgsVisiveis = msgsErro.filter(el => el.offsetWidth > 0 && el.offsetHeight > 0 && el.textContent.trim() !== '');
+            const inputsInvalidos = document.querySelectorAll('input:invalid, select:invalid, textarea:invalid');
+
+            return msgsVisiveis.length > 0 || inputsInvalidos.length > 0;
+        });
+
+        if (temMensagemErro && page.url().includes('/ocorrencias/ocorrencias-criar')) {
+            console.error('❌ ERRO: O SIPOM recusou o registro por falta de campo obrigatório!');
+
+            const errosDetalhados = await page.evaluate(() => {
+                return Array.from(document.querySelectorAll('.alert-danger, .invalid-feedback, .has-error'))
+                    .map(e => e.textContent.trim())
+                    .filter(txt => txt.length > 0);
+            });
+
+            if (errosDetalhados.length > 0) {
+                console.error('📌 Motivos informados pelo SIPOM:', errosDetalhados.join(' | '));
+            }
+
+            throw new Error('Formulário inicial rejeitado pelo SIPOM. Verifique se algum campo obrigatório não foi preenchido.');
+        }
+
+        // Aguarda os seletores das abas estarem visíveis
         console.log('[+] Aguardando o carregamento das abas de edição...');
         const seletorAba = page.locator('#pessoas-tab, #materiais-tab, #composicoes-tab, a:has-text("Pessoas")').first();
-        await seletorAba.waitFor({ state: 'visible', timeout: 15000 });
+        await seletorAba.waitFor({ state: 'visible', timeout: 30000 });
 
-        console.log('✅ Nova página carregada! Iniciando preenchimento dos modais...\n');
+        console.log(`✅ Registro inicial concluído com sucesso! URL Atual: ${page.url()}`);
+        console.log('🚀 Iniciando preenchimento sequencial dos modais...\n');
 
         if (dados.pessoas && dados.pessoas.length > 0) {
             await preencherAbaPessoas(page, dados);

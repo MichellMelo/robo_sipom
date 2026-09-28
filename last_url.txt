@@ -1,1 +1,1 @@
-https://sipom.pm.ce.gov.br/ocorrencias/ocorrencias-exibir/1d930715f9be37f7afa39a0edecc0b0b3fe4fc5c870e6a5e6f594b12360c333340b3a4ae3c3aa90a2cee642439c155bf62764203fdb3ed699705c1f798bed0b9a6dd31885bfea9344a289c133036717e575a0da0f9
+https://sipom.pm.ce.gov.br/ocorrencias/ocorrencias-listar
